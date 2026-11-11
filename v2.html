@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Leitor QR → e-SUS v2</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script src="catmat.js"></script>
+<style>
+  :root{--bg:#0f1115;--card:#1a1d24;--txt:#f2f3f5;--mut:#9aa0ab;--acc:#3ddc97;--err:#ff6b6b;--warn:#ffc857;--line:#2a2e37}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--txt);
+       padding:calc(12px + env(safe-area-inset-top)) 12px calc(20px + env(safe-area-inset-bottom))}
+  .wrap{max-width:520px;margin:0 auto}
+  h1{font-size:1.15rem;margin:0 0 8px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;padding:5px 10px;border-radius:999px;border:1px solid var(--line)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--warn)}
+  .ok .dot{background:var(--acc)} .bad .dot{background:var(--err)}
+  .cam{position:relative;margin-top:10px;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:4/3}
+  video{width:100%;height:100%;object-fit:cover;display:block}
+  .frame{position:absolute;inset:15% 25%;border:3px solid rgba(255,255,255,.75);border-radius:16px;pointer-events:none;transition:border-color .2s}
+  .frame.hit{border-color:var(--acc)}
+  .btn{display:block;width:100%;padding:16px;border:0;border-radius:14px;font-size:1.05rem;font-weight:600;background:var(--acc);color:#05140d;margin-top:10px}
+  .btn.sec{background:var(--card);color:var(--txt);border:1px solid var(--line)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:10px}
+  .status{font-size:1rem;line-height:1.4}
+  .status.good{color:var(--acc)} .status.err{color:var(--err)}
+  .val{word-break:break-all;color:var(--mut);font-size:.85rem;margin-top:6px}
+  .link{background:none;border:0;color:var(--mut);text-decoration:underline;font-size:.85rem;padding:0;margin-top:14px}
+  .med{font-weight:700;font-size:1.05rem;line-height:1.3}
+  .code{color:var(--mut);font-size:.8rem;margin-top:2px}
+  .qbtns{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:8px;margin-top:12px}
+  .qb{padding:18px 0;font-size:1.4rem;font-weight:700;border-radius:12px;border:2px solid var(--acc);background:transparent;color:var(--acc)}
+  .qb.main{background:var(--acc);color:#05140d}
+  .other{display:flex;gap:8px;margin-top:10px}
+  .other input{flex:1;font-size:1.4rem;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--txt);text-align:center}
+  .other button{padding:0 18px;border-radius:12px;border:0;background:var(--acc);color:#05140d;font-weight:700;font-size:1rem}
+  .cd{margin-top:10px;font-size:.95rem;color:var(--warn)}
+  .row{display:flex;gap:8px}
+  .row .btn{margin-top:10px}
+  label.tg{display:flex;gap:8px;align-items:center;color:var(--mut);font-size:.9rem;margin-top:14px}
+  ol{padding-left:20px;line-height:1.5;margin:6px 0 0}
+  .acc{border-color:var(--acc)}
+  .tot{font-size:2.6rem;font-weight:800;color:var(--acc);margin:6px 0 2px}
+  .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px}
+  .bar>i{display:block;height:100%;background:var(--acc);width:100%;transition:width linear}
+  select{font-size:.9rem;background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:4px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📷 Leitor QR → e-SUS <small style="font-weight:400;color:#9aa0ab">v2</small></h1>
+
+  <section id="v-unpaired" hidden>
+    <div class="card">
+      <div class="status">Este celular ainda não está pareado.</div>
+      <ol>
+        <li>No computador, clique no ícone da extensão <b>Leitor QR → e-SUS</b> no Firefox.</li>
+        <li>Aponte a <b>câmera normal do iPhone</b> para o QR que aparece e toque no link.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="v-main" hidden>
+    <span class="pill" id="pill"><span class="dot"></span><span id="pill-t">Conectando ao computador…</span></span>
+    <div class="cam" id="cam" hidden>
+      <video id="video" playsinline muted autoplay></video>
+      <div class="frame" id="frame"></div>
+    </div>
+    <button class="btn" id="start" type="button">📸 Abrir câmera</button>
+
+    <!-- Somando (QR com quantidade) -->
+    <div class="card acc" id="acard" hidden>
+      <div class="med" id="a-name"></div>
+      <div class="code" id="a-code"></div>
+      <div class="tot" id="a-tot"></div>
+      <div class="code" id="a-hint">Escaneie de novo para somar</div>
+      <div class="bar"><i id="a-bar"></i></div>
+      <div class="row">
+        <button class="btn" id="a-send" type="button">Enviar agora</button>
+        <button class="btn sec" id="a-cancel" type="button">Cancelar</button>
+      </div>
+      <button class="btn sec" id="a-change" type="button">✏️ Mudar quantidade</button>
+    </div>
+
+    <!-- Escolha da quantidade -->
+    <div class="card" id="qcard" hidden>
+      <div class="med" id="q-name"></div>
+      <div class="code" id="q-code"></div>
+      <div class="qbtns" id="q-btns"></div>
+      <div class="cd" id="q-cd" hidden></div>
+      <div class="other">
+        <input id="q-other" type="number" inputmode="numeric" min="1" placeholder="Outra qtd">
+        <button id="q-send" type="button">Enviar</button>
+      </div>
+      <button class="btn sec" id="q-cancel" type="button">Cancelar</button>
+    </div>
+
+    <div class="card">
+      <div class="status" id="status">Aponte a câmera para o QR Code do medicamento.</div>
+      <div class="val" id="val"></div>
+    </div>
+
+    <label class="tg">Esperar <select id="opt-wait"><option value="2">2 s</option><option value="3">3 s</option><option value="4">4 s</option><option value="5">5 s</option></select> antes de enviar (para dar tempo de escanear de novo e somar)</label>
+    <label class="tg"><input type="checkbox" id="opt-auto"> Enviar sozinho quando o item só tem 1 quantidade (em 2 s)</label>
+    <label class="tg"><input type="checkbox" id="opt-raw"> Só digitar o código (sem preencher quantidades)</label>
+    <button class="link" id="unpair" type="button">Desparear este celular</button>
+  </section>
+</div>
+<canvas id="cv" hidden></canvas>
+
+<script>
+// Lista em catmat.js: [CATMAT, nome, [quantidades usuais]]
+const MAPA = new Map(LISTA.map(([c,n,q]) => [c.toUpperCase(), {code:c, name:n, qtys:q}]));
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }; // sem TURN
+
+const m = location.hash.match(/^#p=([a-z0-9-]+)\.([a-z0-9]+)$/i);
+if (m) { store.set('esus-pair', m[1] + '.' + m[2]); history.replaceState(null, '', location.pathname); }
+const pair = store.get('esus-pair');
+
+function setPill(cls, t){ $('pill').className = 'pill ' + cls; $('pill-t').textContent = t; }
+function setStatus(t, cls){ const s=$('status'); s.textContent=t; s.className='status' + (cls ? ' '+cls : ''); }
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+function vib(){ try{ navigator.vibrate && navigator.vibrate(60); }catch(e){} }
+
+$('unpair').onclick = () => { store.del('esus-pair'); location.reload(); };
+$('opt-auto').checked = store.get('esus-auto') !== '0';
+$('opt-auto').onchange = () => store.set('esus-auto', $('opt-auto').checked ? '1' : '0');
+$('opt-raw').checked = store.get('esus-raw') === '1';
+$('opt-wait').value = store.get('esus-wait') || '3';
+$('opt-wait').onchange = () => store.set('esus-wait', $('opt-wait').value);
+$('opt-raw').onchange = () => store.set('esus-raw', $('opt-raw').checked ? '1' : '0');
+
+// Lê "CODIGO" ou "CODIGO;QTD" (também aceita | ou espaço)
+function parse(text){
+  const t = text.trim();
+  const mm = t.match(/^(.+?)\s*[;|]\s*(\d+)$/);
+  const code = (mm ? mm[1] : t).trim();
+  const qty = mm ? parseInt(mm[2], 10) : null;
+  return { code, qty, item: MAPA.get(code.toUpperCase()) || null };
+}
+
+if (!pair) { $('v-unpaired').hidden = false; }
+else {
+  $('v-main').hidden = false;
+  const [pcId, token] = pair.split('.');
+  let peer = null, conn = null, connecting = false;
+  const acks = new Map();
+
+  function connect(){
+    if (connecting) return; connecting = true;
+    setPill('', 'Conectando ao computador…');
+    if (!peer || peer.destroyed) {
+      peer = new Peer(undefined, { config: ICE, debug: 1 });
+      peer.on('error', err => {
+        connecting = false;
+        const t = err && err.type;
+        if (t === 'peer-unavailable') setPill('bad', 'Computador não encontrado — o Firefox está aberto?');
+        else setPill('bad', 'Sem conexão (' + (t || 'erro') + ')');
+        setTimeout(connect, 4000);
+      });
+      peer.on('disconnected', () => { try { peer.reconnect(); } catch(e){} });
+      peer.on('open', () => openConn());
+    } else if (peer.open) openConn();
+    else connecting = false;
+  }
+  function openConn(){
+    if (conn) { try { conn.close(); } catch(e){} }
+    conn = peer.connect(pcId, { reliable: true });
+    const timer = setTimeout(() => { if (!conn.open) { connecting = false; setPill('bad', 'Não consegui falar com o computador. Estão na mesma rede?'); setTimeout(connect, 4000); } }, 12000);
+    conn.on('open', () => { clearTimeout(timer); connecting = false; setPill('ok', 'Conectado ao computador'); });
+    conn.on('data', d => { if (d && d.type === 'ack' && acks.has(d.id)) { acks.get(d.id)(d); acks.delete(d.id); } });
+    conn.on('close', () => { connecting = false; setPill('bad', 'Conexão perdida — reconectando…'); setTimeout(connect, 2000); });
+    conn.on('error', () => { connecting = false; });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (!conn || !conn.open)) { if (peer && peer.destroyed) peer = null; connect(); }
+  });
+  connect();
+
+  function waitAck(id, ms){
+    return new Promise(res => { acks.set(id, res); setTimeout(() => { if (acks.has(id)) { acks.delete(id); res(null); } }, ms); });
+  }
+  async function send(payload, label){
+    if (!conn || !conn.open) { setStatus('⚠️ Sem conexão com o computador. Aguarde reconectar e leia de novo.', 'err'); connect(); return false; }
+    const id = uid();
+    setStatus('Enviando ' + label + '…');
+    const p = waitAck(id, 20000);
+    conn.send(Object.assign({ type: 'scan', id, token }, payload));
+    const a = await p;
+    if (!a) { setStatus('⚠️ O computador não respondeu.', 'err'); return false; }
+    if (a.ok) { setStatus('✅ ' + (a.msg || 'Feito no e-SUS'), 'good'); vib(); return true; }
+    setStatus('⚠️ ' + (a.reason || 'erro'), 'err'); return false;
+  }
+
+  // ---------- Quantidade ----------
+  let pending = null, cdTimer = null, busy = false;
+  function closeQ(){ clearInterval(cdTimer); cdTimer = null; $('qcard').hidden = true; $('q-cd').hidden = true; pending = null; }
+  async function dispatch(qty){
+    if (!pending) return;
+    const p = pending; closeQ(); busy = true;
+    await send({ text: p.code, code: p.code, name: p.name, qty }, (p.name || p.code) + ' — ' + qty);
+    busy = false; resume();
+  }
+  function askQty(p, noAuto){
+    pending = p;
+    $('q-name').textContent = p.name || 'Código fora da lista';
+    $('q-code').textContent = p.code;
+    const box = $('q-btns'); box.innerHTML = '';
+    (p.qtys || []).forEach((q, i) => {
+      const b = document.createElement('button');
+      b.className = 'qb' + (i === 0 ? ' main' : ''); b.type = 'button'; b.textContent = q;
+      b.onclick = () => dispatch(q);
+      box.appendChild(b);
+    });
+    $('q-other').value = '';
+    $('qcard').hidden = false;
+    setStatus('Escolha a quantidade.');
+    if (!noAuto && p.qtys && p.qtys.length === 1 && $('opt-auto').checked) {
+      let s = 2; $('q-cd').hidden = false; $('q-cd').textContent = 'Enviando ' + p.qtys[0] + ' em ' + s + ' s… (toque em outra quantidade para mudar)';
+      cdTimer = setInterval(() => { s--; if (s <= 0) { clearInterval(cdTimer); dispatch(p.qtys[0]); } else $('q-cd').textContent = 'Enviando ' + p.qtys[0] + ' em ' + s + ' s… (toque em outra quantidade para mudar)'; }, 1000);
+    }
+  }
+  const stopCd = () => { if (cdTimer) { clearInterval(cdTimer); cdTimer = null; $('q-cd').hidden = true; } };
+  $('q-other').addEventListener('focus', stopCd);
+  $('q-send').onclick = () => { const v = parseInt($('q-other').value, 10); if (v > 0) dispatch(v); else $('q-other').focus(); };
+  $('q-cancel').onclick = () => { closeQ(); setStatus('Cancelado. Leia o próximo.'); resume(); };
+
+  // ---------- Somar (QR com quantidade) ----------
+  let acc = null, accTimer = null;
+  function accRender(){
+    $('a-name').textContent = acc.name || 'Código fora da lista';
+    $('a-code').textContent = acc.code + (acc.n > 1 ? '  ·  ' + acc.n + ' leituras' : '');
+    $('a-tot').textContent = acc.total;
+    $('acard').hidden = false;
+  }
+  function accRestart(){
+    clearTimeout(accTimer);
+    const ms = (parseInt($('opt-wait').value, 10) || 3) * 1000;
+    const bar = $('a-bar'); bar.style.transition = 'none'; bar.style.width = '100%';
+    requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.transition = 'width ' + ms + 'ms linear'; bar.style.width = '0%'; }));
+    accTimer = setTimeout(accFlush, ms);
+  }
+  async function accFlush(){
+    clearTimeout(accTimer); accTimer = null;
+    if (!acc) return;
+    const a = acc; acc = null; $('acard').hidden = true;
+    busy = true;
+    await send({ text: a.code, code: a.code, name: a.name, qty: a.total }, (a.name || a.code) + ' — ' + a.total);
+    busy = false;
+  }
+  $('a-send').onclick = () => accFlush();
+  // Mudar a quantidade lida no QR
+  $('a-change').onclick = () => {
+    clearTimeout(accTimer); accTimer = null;
+    if (!acc) return;
+    const a = acc; acc = null; $('acard').hidden = true;
+    const it = MAPA.get(a.code.toUpperCase());
+    askQty({ code: a.code, name: a.name, qtys: it ? it.qtys : [] }, true);
+    $('q-other').value = a.total;
+  };
+  $('a-cancel').onclick = () => { clearTimeout(accTimer); acc = null; $('acard').hidden = true; setStatus('Cancelado. Leia o próximo.'); };
+
+  async function onCode(text){
+    const r = parse(text);
+    $('val').textContent = text;
+    if ($('opt-raw').checked) { busy = true; await send({ text: r.code }, r.code); busy = false; return; }
+    const name = r.item ? r.item.name : '';
+    if (r.qty) {                                   // QR já traz a quantidade: soma e envia sozinho
+      if (acc && acc.code.toUpperCase() === r.code.toUpperCase()) { acc.total += r.qty; acc.n++; }
+      else { if (acc) await accFlush(); acc = { code: r.code, name, total: r.qty, n: 1 }; }
+      accRender(); accRestart(); setStatus('Somando… escaneie de novo para somar, ou aguarde.');
+      return;
+    }
+    if (acc) await accFlush();
+    askQty({ code: r.code, name, qtys: r.item ? r.item.qtys : [] });
+  }
+
+  // ---------- Câmera ----------
+  const video = $('video'), cv = $('cv'), ctx = cv.getContext('2d', { willReadFrequently: true });
+  // Um QR conta de novo só depois de sair da câmera por um instante
+  let seen = '', seenAt = 0;
+  function resume(){}
+  $('start').onclick = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      video.srcObject = stream; await video.play();
+      $('cam').hidden = false; $('start').hidden = true;
+      if (!conn || !conn.open) connect();
+      loop();
+    } catch (e) {
+      setStatus('⚠️ Não consegui abrir a câmera. Permita o acesso à câmera para este site nas configurações do Safari.', 'err');
+    }
+  };
+  function loop(){
+    if (video.readyState >= 2 && video.videoWidth) {
+      const sc = Math.min(1, 800 / Math.max(video.videoWidth, video.videoHeight));
+      cv.width = Math.round(video.videoWidth * sc); cv.height = Math.round(video.videoHeight * sc);
+      ctx.drawImage(video, 0, 0, cv.width, cv.height);
+      const d = ctx.getImageData(0, 0, cv.width, cv.height);
+      const code = jsQR(d.data, d.width, d.height, { inversionAttempts: 'dontInvert' });
+      const now = Date.now();
+      if (code && code.data) {
+        const isNew = code.data !== seen || now - seenAt > 1000;
+        seen = code.data; seenAt = now;
+        if (isNew && !pending && !busy) {
+          vib(); const f = $('frame'); f.classList.add('hit'); setTimeout(() => f.classList.remove('hit'), 400);
+          onCode(code.data);
+        }
+      }
+    }
+    setTimeout(() => requestAnimationFrame(loop), 120);
+  }
+}
+</script>
+</body>
+</html>
