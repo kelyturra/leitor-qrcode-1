@@ -68,7 +68,11 @@
   .btn.danger{background:transparent;color:var(--err);border:1px solid var(--err)}
   /* compacto */
   body{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
-  .cam{aspect-ratio:16/9;max-height:26vh}
+  .cam{aspect-ratio:1/1;width:min(100%,34vh);margin:10px auto 0}
+  .cam .frame{inset:15%}
+  .zoom{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:8px}
+  .zoom button{background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:999px;padding:6px 12px;font-weight:700;font-size:.9rem}
+  .zoom button.on{background:var(--acc);color:#05140d;border-color:var(--acc)}
   #cur{padding:10px 12px}
   #cur .top{display:flex;align-items:center;gap:10px}
   #cur .top .med{flex:1;font-size:.95rem}
@@ -102,6 +106,7 @@
     <div class="cam" id="cam" hidden>
       <video id="video" playsinline muted autoplay></video>
       <div class="frame" id="frame"></div>
+      <div class="zoom" id="zoom" hidden></div>
     </div>
     <button class="btn" id="start" type="button">📸 Abrir câmera</button>
 
@@ -335,7 +340,9 @@ else {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
       video.srcObject = stream; await video.play();
-      try { const tr = stream.getVideoTracks()[0]; await tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+      const tr = stream.getVideoTracks()[0];
+      try { await tr.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+      setupZoom(tr);
       $('cam').hidden = false; $('start').hidden = true;
       if (!conn || !conn.open) connect();
       loop();
@@ -343,6 +350,21 @@ else {
       setStatus('⚠️ Não consegui abrir a câmera. Permita o acesso à câmera para este site nas configurações do Safari.', 'err');
     }
   };
+  // Zoom (se o aparelho permitir): ajuda quando a câmera não foca de perto
+  function setupZoom(tr){
+    let caps = {};
+    try { caps = tr.getCapabilities ? tr.getCapabilities() : {}; } catch (e) {}
+    if (!caps.zoom || !(caps.zoom.max > 1)) return;
+    const opts = [1, 2, 3].filter(z => z >= (caps.zoom.min || 1) && z <= caps.zoom.max);
+    const box = $('zoom'); box.innerHTML = ''; box.hidden = false;
+    const apply = async z => {
+      try { await tr.applyConstraints({ advanced: [{ zoom: z }] }); store.set('esus-zoom', String(z)); } catch (e) {}
+      Array.from(box.children).forEach(b => b.classList.toggle('on', b.dataset.z === String(z)));
+    };
+    opts.forEach(z => { const b = document.createElement('button'); b.type = 'button'; b.dataset.z = String(z); b.textContent = z + '×'; b.onclick = () => apply(z); box.appendChild(b); });
+    const saved = parseFloat(store.get('esus-zoom') || '2');
+    apply(opts.includes(saved) ? saved : opts[Math.min(1, opts.length - 1)]);
+  }
   // Lê um pedaço da imagem: alterna entre o centro (mais detalhe) e a imagem inteira
   function readJsQR(){
     const vw = video.videoWidth, vh = video.videoHeight;
