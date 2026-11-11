@@ -66,6 +66,21 @@
   .h2{font-weight:700;font-size:1rem;display:flex;justify-content:space-between;align-items:center}
   .btn.big{font-size:1.15rem;padding:18px}
   .btn.danger{background:transparent;color:var(--err);border:1px solid var(--err)}
+  /* compacto */
+  body{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+  .cam{aspect-ratio:16/9;max-height:26vh}
+  #cur{padding:10px 12px}
+  #cur .top{display:flex;align-items:center;gap:10px}
+  #cur .top .med{flex:1;font-size:.95rem}
+  #cur .tot{font-size:2rem;margin:0}
+  .mults{display:flex;gap:6px;overflow-x:auto;margin-top:8px;grid-template-columns:none}
+  .mb{flex:1 1 0;padding:9px 0;font-size:.95rem;border-radius:10px;min-width:0}
+  .chips{margin-top:8px}
+  .chip{padding:8px 14px}
+  .other{margin-top:8px}
+  .other input{font-size:1.2rem;padding:8px}
+  .footer{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(15,17,21,.96);border-top:1px solid var(--line);z-index:10}
+  .footer .btn{margin:0 auto;max-width:520px;padding:15px}
 </style>
 </head>
 <body>
@@ -92,17 +107,15 @@
 
     <!-- Item que está sendo ajustado -->
     <div class="card acc" id="cur" hidden>
-      <div class="med" id="c-name"></div>
-      <div class="code" id="c-code"></div>
-      <div class="tot" id="c-tot"></div>
+      <div class="top"><div class="med" id="c-name"></div><div class="tot" id="c-tot"></div></div>
       <div class="formula" id="c-formula"></div>
       <div class="mults" id="c-mults"></div>
       <div class="chips" id="c-chips"></div>
-      <div class="other">
+      <div class="other" id="c-other" hidden>
         <input id="c-input" type="number" inputmode="numeric" min="1" placeholder="Digitar qtd">
         <button id="c-set" type="button">OK</button>
       </div>
-      <div class="code" style="margin-top:8px">Escaneie o mesmo QR de novo para somar. Escaneie outro medicamento para continuar.</div>
+      <div class="code" id="c-code" hidden></div>
     </div>
 
     <!-- Lista para conferir -->
@@ -110,7 +123,6 @@
       <div class="h2"><span>Lista para conferir</span><span id="l-count" style="color:var(--mut);font-weight:400"></span></div>
       <div id="list"></div>
       <div class="code" id="l-empty">Escaneie os medicamentos. Eles vão aparecer aqui.</div>
-      <button class="btn big" id="send-all" type="button" hidden>✅ Está tudo certo — Enviar para o e-SUS</button>
       <button class="btn sec" id="clear" type="button" hidden>🗑 Limpar lista (nova dispensação)</button>
     </div>
 
@@ -123,6 +135,7 @@
     <button class="link" id="unpair" type="button">Desparear este celular</button>
   </section>
 </div>
+<div class="footer" id="footer" hidden><button class="btn big" id="send-all" type="button">✅ Enviar para o e-SUS</button></div>
 <canvas id="cv" hidden></canvas>
 
 <script>
@@ -227,14 +240,14 @@ else {
       const q = document.createElement('div'); q.className = 'q'; q.textContent = it.total || '?';
       const x = document.createElement('button'); x.className = 'x'; x.type = 'button'; x.textContent = '✕';
       x.onclick = (e) => { e.stopPropagation(); if (busy) return; items.splice(i, 1); if (curIdx === i) curIdx = -1; else if (curIdx > i) curIdx--; save(); renderAll(); };
-      row.onclick = () => { if (busy || it.st === 'ok') return; curIdx = i; renderAll(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+      row.onclick = () => { if (busy || it.st === 'ok') return; curIdx = i; renderAll(); $('cur').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
       row.append(nm, q, x); box.appendChild(row);
     });
     const pend = items.filter(it => it.st !== 'ok').length;
     $('l-count').textContent = items.length ? items.length + ' ite' + (items.length > 1 ? 'ns' : 'm') : '';
     $('l-empty').hidden = items.length > 0;
-    $('send-all').hidden = pend === 0 || busy;
-    $('send-all').textContent = items.some(it => it.st === 'err') ? '▶️ Continuar envio (' + pend + ')' : '✅ Está tudo certo — Enviar para o e-SUS (' + pend + ')';
+    $('footer').hidden = pend === 0 || busy;
+    $('send-all').textContent = items.some(it => it.st === 'err') ? '▶️ Continuar envio (' + pend + ')' : '✅ Enviar para o e-SUS (' + pend + ')';
     $('clear').hidden = items.length === 0 || busy;
   }
   function renderCur(){
@@ -251,17 +264,21 @@ else {
     if (it.base) {
       mk('−', () => { if (it.total - it.base >= it.base) it.total -= it.base; });
       mk('+' + it.base, () => { it.total += it.base; });
-      [2, 3, 4, 6, 12].forEach(k => mk('×' + k, () => { it.total = it.base * k; }, mult === k));
+      [2, 3, 6, 12].forEach(k => mk('×' + k, () => { it.total = it.base * k; }, mult === k));
     }
+    const ed = document.createElement('button'); ed.type = 'button'; ed.className = 'mb'; ed.textContent = '✏️';
+    ed.onclick = () => { $('c-other').hidden = false; $('c-input').focus(); };
+    box.appendChild(ed);
     const chips = $('c-chips'); chips.innerHTML = '';
-    (it.qtys || []).forEach(q => { const c = document.createElement('button'); c.type = 'button'; c.className = 'chip'; c.textContent = q; c.onclick = () => { it.base = q; it.total = q; it.st = ''; save(); renderAll(); }; chips.appendChild(c); });
+    (it.base ? [] : (it.qtys || [])).forEach(q => { const c = document.createElement('button'); c.type = 'button'; c.className = 'chip'; c.textContent = q; c.onclick = () => { it.base = q; it.total = q; it.st = ''; save(); renderAll(); }; chips.appendChild(c); });
     $('c-input').value = '';
+    $('c-other').hidden = !!it.base && !!(it.qtys || []).length;
   }
   function renderAll(){ renderList(); renderCur(); }
   $('c-set').onclick = () => {
     const v = parseInt($('c-input').value, 10); const it = items[curIdx];
     if (!it) return;
-    if (v > 0) { it.total = v; it.st = ''; save(); renderAll(); $('c-input').blur(); } else $('c-input').focus();
+    if (v > 0) { it.total = v; if (!it.base) it.base = v; it.st = ''; $('c-input').blur(); save(); renderAll(); } else $('c-input').focus();
   };
   $('c-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('c-set').click(); });
   $('clear').onclick = () => { if (busy) return; if (items.some(it => it.st !== 'ok') && !window.confirm('Limpar a lista? Os itens ainda não enviados serão apagados.')) return; items = []; curIdx = -1; save(); renderAll(); setStatus('Lista limpa. Pode começar a próxima dispensação.'); };
