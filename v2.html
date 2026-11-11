@@ -43,6 +43,10 @@
   label.tg{display:flex;gap:8px;align-items:center;color:var(--mut);font-size:.9rem;margin-top:14px}
   ol{padding-left:20px;line-height:1.5;margin:6px 0 0}
   .acc{border-color:var(--acc)}
+  .mults{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+  .mb{padding:14px 0;font-size:1.15rem;font-weight:700;border-radius:12px;border:2px solid var(--acc);background:transparent;color:var(--acc)}
+  .mb.on{background:var(--acc);color:#05140d}
+  .formula{color:var(--mut);font-size:.95rem}
   .tot{font-size:2.6rem;font-weight:800;color:var(--acc);margin:6px 0 2px}
   .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px}
   .bar>i{display:block;height:100%;background:var(--acc);width:100%;transition:width linear}
@@ -77,6 +81,8 @@
       <div class="med" id="a-name"></div>
       <div class="code" id="a-code"></div>
       <div class="tot" id="a-tot"></div>
+      <div class="formula" id="a-formula"></div>
+      <div class="mults" id="a-mults"></div>
       <div class="code" id="a-hint">Escaneie de novo para somar</div>
       <div class="bar"><i id="a-bar"></i></div>
       <div class="row">
@@ -242,6 +248,13 @@ else {
     $('a-name').textContent = acc.name || 'Código fora da lista';
     $('a-code').textContent = acc.code + (acc.n > 1 ? '  ·  ' + acc.n + ' leituras' : '');
     $('a-tot').textContent = acc.total;
+    const mult = acc.base && acc.total % acc.base === 0 ? acc.total / acc.base : 0;
+    $('a-formula').textContent = (mult > 1) ? acc.base + ' × ' + mult + ' = ' + acc.total : '';
+    const box = $('a-mults'); box.innerHTML = '';
+    const mk = (label, fn, on) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mb' + (on ? ' on' : ''); b.textContent = label; b.onclick = () => { fn(); accRender(); accRestart(); }; box.appendChild(b); };
+    mk('−', () => { if (acc.total - acc.base >= acc.base) acc.total -= acc.base; });
+    mk('+' + acc.base, () => { acc.total += acc.base; });
+    [2, 3, 4, 6, 12].forEach(k => mk('×' + k, () => { acc.total = acc.base * k; }, mult === k));
     $('acard').hidden = false;
   }
   function accRestart(){
@@ -278,7 +291,7 @@ else {
     const name = r.item ? r.item.name : '';
     if (r.qty) {                                   // QR já traz a quantidade: soma e envia sozinho
       if (acc && acc.code.toUpperCase() === r.code.toUpperCase()) { acc.total += r.qty; acc.n++; }
-      else { if (acc) await accFlush(); acc = { code: r.code, name, total: r.qty, n: 1 }; }
+      else { if (acc) await accFlush(); acc = { code: r.code, name, total: r.qty, n: 1, base: r.qty }; }
       accRender(); accRestart(); setStatus('Somando… escaneie de novo para somar, ou aguarde.');
       return;
     }
