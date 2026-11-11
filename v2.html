@@ -110,7 +110,7 @@
       <div class="val" id="val"></div>
     </div>
 
-    <label class="tg">Esperar <select id="opt-wait"><option value="2">2 s</option><option value="3">3 s</option><option value="4">4 s</option><option value="5">5 s</option></select> antes de enviar (para dar tempo de escanear de novo e somar)</label>
+    <label class="tg">Esperar <select id="opt-wait"><option value="3">3 s</option><option value="5">5 s</option><option value="8">8 s</option><option value="10">10 s</option><option value="0">só quando eu tocar Enviar</option></select> antes de enviar sozinho</label>
     <label class="tg"><input type="checkbox" id="opt-auto"> Enviar sozinho quando o item só tem 1 quantidade (em 2 s)</label>
     <label class="tg"><input type="checkbox" id="opt-raw"> Só digitar o código (sem preencher quantidades)</label>
     <button class="link" id="unpair" type="button">Desparear este celular</button>
@@ -143,8 +143,8 @@ $('unpair').onclick = () => { store.del('esus-pair'); location.reload(); };
 $('opt-auto').checked = store.get('esus-auto') !== '0';
 $('opt-auto').onchange = () => store.set('esus-auto', $('opt-auto').checked ? '1' : '0');
 $('opt-raw').checked = store.get('esus-raw') === '1';
-$('opt-wait').value = store.get('esus-wait') || '3';
-$('opt-wait').onchange = () => store.set('esus-wait', $('opt-wait').value);
+$('opt-wait').value = store.get('esus-wait2') || '5';
+$('opt-wait').onchange = () => store.set('esus-wait2', $('opt-wait').value);
 $('opt-raw').onchange = () => store.set('esus-raw', $('opt-raw').checked ? '1' : '0');
 
 // Lê "CODIGO" ou "CODIGO;QTD" (também aceita | ou espaço)
@@ -251,15 +251,23 @@ else {
     const mult = acc.base && acc.total % acc.base === 0 ? acc.total / acc.base : 0;
     $('a-formula').textContent = (mult > 1) ? acc.base + ' × ' + mult + ' = ' + acc.total : '';
     const box = $('a-mults'); box.innerHTML = '';
-    const mk = (label, fn, on) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mb' + (on ? ' on' : ''); b.textContent = label; b.onclick = () => { fn(); accRender(); accRestart(); }; box.appendChild(b); };
+    const mk = (label, fn, on) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mb' + (on ? ' on' : ''); b.textContent = label; b.onclick = () => { fn(); accRender(); accPause(); }; box.appendChild(b); };
     mk('−', () => { if (acc.total - acc.base >= acc.base) acc.total -= acc.base; });
     mk('+' + acc.base, () => { acc.total += acc.base; });
     [2, 3, 4, 6, 12].forEach(k => mk('×' + k, () => { acc.total = acc.base * k; }, mult === k));
     $('acard').hidden = false;
   }
+  function accPause(){
+    clearTimeout(accTimer); accTimer = null;
+    const bar = $('a-bar'); bar.style.transition = 'none'; bar.style.width = '0%';
+    $('a-hint').textContent = 'Pausado — confira e toque em Enviar agora';
+  }
   function accRestart(){
     clearTimeout(accTimer);
-    const ms = (parseInt($('opt-wait').value, 10) || 3) * 1000;
+    const secs = parseInt($('opt-wait').value, 10);
+    if (!secs) { accPause(); $('a-hint').textContent = 'Escaneie de novo para somar, ou toque em Enviar agora'; return; }
+    $('a-hint').textContent = 'Escaneie de novo para somar';
+    const ms = secs * 1000;
     const bar = $('a-bar'); bar.style.transition = 'none'; bar.style.width = '100%';
     requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.transition = 'width ' + ms + 'ms linear'; bar.style.width = '0%'; }));
     accTimer = setTimeout(accFlush, ms);
