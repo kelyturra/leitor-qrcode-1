@@ -227,11 +227,14 @@ else {
     return a || { ok: false, reason: 'o computador não respondeu' };
   }
 
-  // ---------- Lista ----------
+  // ---------- Lista + fila de envio ----------
+  // st: ''=ajustando, 'fila'=aguardando envio, 'sending'=enviando, 'ok'=lançado, 'err'=problema
   let items = [];
   try { items = JSON.parse(store.get('esus-lista') || '[]'); } catch (e) { items = []; }
-  let curIdx = -1, busy = false;
+  items.forEach(it => { if (it.st === 'sending') it.st = 'fila'; });
+  let curIdx = -1, busy = false, working = false, paused = false;
   const save = () => store.set('esus-lista', JSON.stringify(items));
+  const editable = it => it && (it.st === '' || it.st === 'fila' || it.st === 'err');
 
   function renderList(){
     const box = $('list'); box.innerHTML = '';
@@ -240,24 +243,34 @@ else {
       row.className = 'li' + (i === curIdx ? ' cur' : '') + (it.st === 'ok' ? ' ok' : it.st === 'err' ? ' err' : '');
       const nm = document.createElement('div'); nm.className = 'nm';
       nm.textContent = it.name || it.code;
-      const sm = document.createElement('small'); sm.textContent = it.code; nm.appendChild(sm);
-      if (it.st) { const st = document.createElement('div'); st.className = 'st ' + (it.st === 'ok' ? 'ok' : it.st === 'err' ? 'err' : 'wait'); st.textContent = it.st === 'ok' ? '✅ ' + (it.msg || 'enviado') : it.st === 'err' ? '⚠️ ' + (it.msg || 'erro') : '⏳ enviando…'; nm.appendChild(st); }
+      const st = document.createElement('div');
+      const map = { '': ['wait', i === curIdx ? '✏️ ajustando — leia o próximo para enviar' : '✏️ ajustando'], fila: ['wait', '🕒 na fila'], sending: ['wait', '⏳ lançando no e-SUS…'], ok: ['ok', '✅ ' + (it.msg || 'lançado')], err: ['err', '⚠️ ' + (it.msg || 'erro')] };
+      const [c, t] = map[it.st] || map[''];
+      st.className = 'st ' + c; st.textContent = t; nm.appendChild(st);
       const q = document.createElement('div'); q.className = 'q'; q.textContent = it.total || '?';
       const x = document.createElement('button'); x.className = 'x'; x.type = 'button'; x.textContent = '✕';
-      x.onclick = (e) => { e.stopPropagation(); if (busy) return; items.splice(i, 1); if (curIdx === i) curIdx = -1; else if (curIdx > i) curIdx--; save(); renderAll(); };
-      row.onclick = () => { if (busy || it.st === 'ok') return; curIdx = i; renderAll(); $('cur').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+      x.disabled = it.st === 'sending';
+      x.onclick = (e) => { e.stopPropagation(); if (it.st === 'sending') return; items.splice(i, 1); if (curIdx === i) curIdx = -1; else if (curIdx > i) curIdx--; save(); renderAll(); };
+      row.onclick = () => { if (!editable(it)) return; if (it.st === 'fila') it.st = ''; curIdx = i; save(); renderAll(); $('cur').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
       row.append(nm, q, x); box.appendChild(row);
     });
-    const pend = items.filter(it => it.st !== 'ok').length;
-    $('l-count').textContent = items.length ? items.length + ' ite' + (items.length > 1 ? 'ns' : 'm') : '';
+    const done = items.filter(it => it.st === 'ok').length;
+    const fila = items.filter(it => it.st === 'fila' || it.st === 'sending').length;
+    const err = items.find(it => it.st === 'err');
+    const cur = items[curIdx];
+    $('l-count').textContent = items.length ? done + '/' + items.length + ' lançados' : '';
     $('l-empty').hidden = items.length > 0;
-    $('footer').hidden = pend === 0 || busy;
-    $('send-all').textContent = items.some(it => it.st === 'err') ? '▶️ Continuar envio (' + pend + ')' : '✅ Enviar para o e-SUS (' + pend + ')';
-    $('clear').hidden = items.length === 0 || busy;
+    $('clear').hidden = items.length === 0 || working;
+    const btn = $('send-all');
+    if (err && !working) { btn.textContent = '▶️ Continuar (' + (fila + 1) + ')'; $('footer').hidden = false; }
+    else if (cur && cur.st === '') { btn.textContent = '➡️ Enviar último' + (fila ? ' (' + fila + ' na fila)' : ''); $('footer').hidden = false; }
+    else if (fila) { btn.textContent = '⏳ Lançando… ' + fila + ' na fila'; $('footer').hidden = false; }
+    else $('footer').hidden = true;
+    btn.disabled = !!(fila && !(cur && cur.st === '') && !(err && !working));
   }
   function renderCur(){
     const it = items[curIdx];
-    if (!it || it.st === 'ok') { $('cur').hidden = true; return; }
+    if (!it || it.st !== '') { $('cur').hidden = true; return; }
     $('cur').hidden = false;
     $('c-name').textContent = it.name || 'Código fora da lista';
     $('c-code').textContent = it.code;
@@ -265,7 +278,7 @@ else {
     const mult = it.base && it.total && it.total % it.base === 0 ? it.total / it.base : 0;
     $('c-formula').textContent = (mult > 1) ? it.base + ' × ' + mult + ' = ' + it.total : '';
     const box = $('c-mults'); box.innerHTML = '';
-    const mk = (label, fn, on) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mb' + (on ? ' on' : ''); b.textContent = label; b.onclick = () => { fn(); it.st = ''; save(); renderAll(); }; box.appendChild(b); };
+    const mk = (label, fn, on) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'mb' + (on ? ' on' : ''); b.textContent = label; b.onclick = () => { fn(); save(); renderAll(); }; box.appendChild(b); };
     if (it.base) {
       mk('−', () => { if (it.total - it.base >= it.base) it.total -= it.base; });
       mk('+' + it.base, () => { it.total += it.base; });
@@ -275,7 +288,7 @@ else {
     ed.onclick = () => { $('c-other').hidden = false; $('c-input').focus(); };
     box.appendChild(ed);
     const chips = $('c-chips'); chips.innerHTML = '';
-    (it.base ? [] : (it.qtys || [])).forEach(q => { const c = document.createElement('button'); c.type = 'button'; c.className = 'chip'; c.textContent = q; c.onclick = () => { it.base = q; it.total = q; it.st = ''; save(); renderAll(); }; chips.appendChild(c); });
+    (it.base ? [] : (it.qtys || [])).forEach(q => { const c = document.createElement('button'); c.type = 'button'; c.className = 'chip'; c.textContent = q; c.onclick = () => { it.base = q; it.total = q; save(); renderAll(); }; chips.appendChild(c); });
     $('c-input').value = '';
     $('c-other').hidden = !!it.base && !!(it.qtys || []).length;
   }
@@ -283,44 +296,58 @@ else {
   $('c-set').onclick = () => {
     const v = parseInt($('c-input').value, 10); const it = items[curIdx];
     if (!it) return;
-    if (v > 0) { it.total = v; if (!it.base) it.base = v; it.st = ''; $('c-input').blur(); save(); renderAll(); } else $('c-input').focus();
+    if (v > 0) { it.total = v; if (!it.base) it.base = v; $('c-input').blur(); save(); renderAll(); } else $('c-input').focus();
   };
   $('c-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('c-set').click(); });
-  $('clear').onclick = () => { if (busy) return; if (items.some(it => it.st !== 'ok') && !window.confirm('Limpar a lista? Os itens ainda não enviados serão apagados.')) return; items = []; curIdx = -1; save(); renderAll(); setStatus('Lista limpa. Pode começar a próxima dispensação.'); };
+  $('clear').onclick = () => { if (working) return; if (items.some(it => it.st !== 'ok') && !window.confirm('Limpar a lista? Os itens ainda não lançados serão apagados.')) return; items = []; curIdx = -1; paused = false; save(); renderAll(); setStatus('Lista limpa. Pode começar a próxima dispensação.'); };
+
+  // Coloca o item que estava sendo ajustado na fila
+  function queueCurrent(){
+    const it = items[curIdx];
+    if (it && it.st === '' && it.total > 0) { it.st = 'fila'; }
+    else if (it && it.st === '' && !(it.total > 0)) { setStatus('⚠️ Falta a quantidade de ' + (it.name || it.code) + ' — ele ficou fora da fila.', 'err'); }
+  }
+  // Envia a fila em segundo plano, um item por vez
+  async function worker(){
+    if (working || paused) return;
+    working = true; renderList();
+    while (!paused) {
+      const it = items.find(x => x.st === 'fila');
+      if (!it) break;
+      it.st = 'sending'; save(); renderList();
+      const a = await sendRaw({ text: it.code, code: it.code, name: it.name, qty: it.total });
+      if (a.ok) { it.st = 'ok'; it.msg = a.msg || 'lançado'; vib(); }
+      else { it.st = 'err'; it.msg = a.reason || 'erro'; paused = true; setStatus('⚠️ Parei em ' + (it.name || it.code) + ': ' + it.msg + '. Resolva no e-SUS e toque em "Continuar". Se terminar esse item na mão, toque no ✕ dele.', 'err'); }
+      save(); renderAll();
+    }
+    working = false; renderAll();
+    if (!paused && items.length && items.every(x => x.st === 'ok')) setStatus('✅ Tudo lançado! Confira no e-SUS e finalize a dispensação. Depois toque em "Limpar lista".', 'good');
+  }
 
   function addScan(r){
     const name = r.item ? r.item.name : '';
     const qtys = r.item ? r.item.qtys : [];
-    let i = items.findIndex(it => it.code.toUpperCase() === r.code.toUpperCase() && it.st !== 'ok');
+    let i = items.findIndex(it => it.code.toUpperCase() === r.code.toUpperCase() && (it.st === '' || it.st === 'fila'));
     if (i >= 0) {
       const it = items[i];
+      if (i !== curIdx) queueCurrent();
       if (r.qty) { it.total = (it.total || 0) + r.qty; if (!it.base) it.base = r.qty; }
       it.st = '';
       setStatus('Somado: ' + (name || r.code) + ' = ' + it.total);
     } else {
+      queueCurrent();
       const base = r.qty || (qtys.length === 1 ? qtys[0] : 0);
       items.push({ code: r.code, name, qtys, base, total: base, st: '' });
       i = items.length - 1;
-      setStatus(base ? 'Adicionado: ' + (name || r.code) + ' — ' + base : 'Escolha a quantidade de ' + (name || r.code));
+      setStatus(base ? 'Lido: ' + (name || r.code) + ' — ' + base + '. Leia o próximo.' : 'Escolha a quantidade de ' + (name || r.code));
     }
-    curIdx = i; save(); renderAll();
+    curIdx = i; save(); renderAll(); worker();
   }
 
-  $('send-all').onclick = async () => {
-    if (busy) return;
-    const semQtd = items.find(it => it.st !== 'ok' && !(it.total > 0));
-    if (semQtd) { curIdx = items.indexOf(semQtd); renderAll(); setStatus('⚠️ Falta a quantidade de ' + (semQtd.name || semQtd.code), 'err'); return; }
-    busy = true; curIdx = -1; renderAll();
-    for (const it of items) {
-      if (it.st === 'ok') continue;
-      it.st = 'sending'; renderList();
-      setStatus('Enviando ' + (it.name || it.code) + ' — ' + it.total + '…');
-      const a = await sendRaw({ text: it.code, code: it.code, name: it.name, qty: it.total });
-      if (a.ok) { it.st = 'ok'; it.msg = a.msg || 'enviado'; save(); renderList(); vib(); }
-      else { it.st = 'err'; it.msg = a.reason || 'erro'; save(); busy = false; renderAll(); setStatus('⚠️ Parei em ' + (it.name || it.code) + ': ' + it.msg + '. Se você terminar esse item na mão no e-SUS, toque no ✕ dele; depois toque em "Continuar envio".', 'err'); return; }
-    }
-    busy = false; renderAll();
-    setStatus('✅ Tudo enviado! Confira no e-SUS e finalize a dispensação. Depois toque em "Limpar lista".', 'good');
+  $('send-all').onclick = () => {
+    const err = items.find(it => it.st === 'err');
+    if (err && !working) { err.st = 'fila'; paused = false; }
+    queueCurrent(); curIdx = -1; save(); renderAll(); worker();
   };
 
   async function onCode(text){
@@ -329,7 +356,7 @@ else {
     if ($('opt-raw').checked) { busy = true; const a = await sendRaw({ text: r.code }); busy = false; setStatus(a.ok ? '✅ ' + (a.msg || 'digitado') : '⚠️ ' + a.reason, a.ok ? 'good' : 'err'); return; }
     addScan(r);
   }
-  renderAll();
+  renderAll(); worker();
 
   // ---------- Câmera ----------
   const video = $('video'), cv = $('cv'), ctx = cv.getContext('2d', { willReadFrequently: true });
