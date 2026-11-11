@@ -173,7 +173,7 @@ else {
     if (!conn || !conn.open) { setStatus('⚠️ Sem conexão com o computador. Aguarde reconectar e leia de novo.', 'err'); connect(); return false; }
     const id = uid();
     setStatus('Enviando ' + label + '…');
-    const p = waitAck(id, 20000);
+    const p = waitAck(id, 45000);
     conn.send(Object.assign({ type: 'scan', id, token }, payload));
     const a = await p;
     if (!a) { setStatus('⚠️ O computador não respondeu.', 'err'); return false; }
