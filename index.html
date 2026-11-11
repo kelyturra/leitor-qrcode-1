@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Leitor QR → e-SUS</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<style>
+  :root{--bg:#0f1115;--card:#1a1d24;--txt:#f2f3f5;--mut:#9aa0ab;--acc:#3ddc97;--err:#ff6b6b;--warn:#ffc857;--line:#2a2e37}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--txt);
+       padding:calc(14px + env(safe-area-inset-top)) 14px calc(24px + env(safe-area-inset-bottom))}
+  .wrap{max-width:520px;margin:0 auto}
+  h1{font-size:1.25rem;margin:0 0 10px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;padding:5px 10px;border-radius:999px;border:1px solid var(--line)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--warn)}
+  .ok .dot{background:var(--acc)} .bad .dot{background:var(--err)}
+  .cam{position:relative;margin-top:12px;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:3/4}
+  video{width:100%;height:100%;object-fit:cover;display:block}
+  .frame{position:absolute;inset:18%;border:3px solid rgba(255,255,255,.75);border-radius:16px;pointer-events:none;transition:border-color .2s}
+  .frame.hit{border-color:var(--acc)}
+  .btn{display:block;width:100%;padding:16px;border:0;border-radius:14px;font-size:1.05rem;font-weight:600;background:var(--acc);color:#05140d;margin-top:12px}
+  .btn.sec{background:var(--card);color:var(--txt);border:1px solid var(--line)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
+  .status{font-size:1rem;line-height:1.4}
+  .status.good{color:var(--acc)} .status.err{color:var(--err)}
+  .val{word-break:break-all;color:var(--mut);font-size:.85rem;margin-top:6px}
+  .link{background:none;border:0;color:var(--mut);text-decoration:underline;font-size:.85rem;padding:0;margin-top:14px}
+  ol{padding-left:20px;line-height:1.5;margin:6px 0 0}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📷 Leitor QR → e-SUS</h1>
+
+  <section id="v-unpaired" hidden>
+    <div class="card">
+      <div class="status">Este celular ainda não está pareado.</div>
+      <ol>
+        <li>No computador, clique no ícone da extensão <b>Leitor QR → e-SUS</b> no Firefox.</li>
+        <li>Aponte a <b>câmera normal do iPhone</b> para o QR que aparece e toque no link.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="v-main" hidden>
+    <span class="pill" id="pill"><span class="dot"></span><span id="pill-t">Conectando ao computador…</span></span>
+    <div class="cam" id="cam" hidden>
+      <video id="video" playsinline muted autoplay></video>
+      <div class="frame" id="frame"></div>
+    </div>
+    <button class="btn" id="start" type="button">📸 Abrir câmera</button>
+    <div class="card">
+      <div class="status" id="status">No computador, clique no campo do e-SUS. Depois aponte a câmera para o QR Code.</div>
+      <div class="val" id="val"></div>
+    </div>
+    <button class="link" id="unpair" type="button">Desparear este celular</button>
+  </section>
+</div>
+<canvas id="cv" hidden></canvas>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+// Sem servidor TURN: os dados nunca são retransmitidos por terceiros.
+const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+// Pareamento vindo do link (#p=ID.TOKEN)
+const m = location.hash.match(/^#p=([a-z0-9-]+)\.([a-z0-9]+)$/i);
+if (m) { store.set('esus-pair', m[1] + '.' + m[2]); history.replaceState(null, '', location.pathname); }
+const pair = store.get('esus-pair');
+
+function setPill(cls, t){ $('pill').className = 'pill ' + cls; $('pill-t').textContent = t; }
+function setStatus(t, cls){ const s=$('status'); s.textContent=t; s.className='status' + (cls ? ' '+cls : ''); }
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+$('unpair').onclick = () => { store.del('esus-pair'); location.reload(); };
+
+if (!pair) { $('v-unpaired').hidden = false; }
+else {
+  $('v-main').hidden = false;
+  const [pcId, token] = pair.split('.');
+  let peer = null, conn = null, connecting = false;
+  const acks = new Map();
+
+  function connect(){
+    if (connecting) return; connecting = true;
+    setPill('', 'Conectando ao computador…');
+    if (!peer || peer.destroyed) {
+      peer = new Peer(undefined, { config: ICE, debug: 1 });
+      peer.on('error', err => {
+        connecting = false;
+        const t = err && err.type;
+        if (t === 'peer-unavailable') setPill('bad', 'Computador não encontrado — o Firefox está aberto?');
+        else setPill('bad', 'Sem conexão (' + (t || 'erro') + ')');
+        setTimeout(connect, 4000);
+      });
+      peer.on('disconnected', () => { try { peer.reconnect(); } catch(e){} });
+      peer.on('open', () => openConn());
+    } else if (peer.open) openConn();
+    else connecting = false;
+  }
+  function openConn(){
+    if (conn) { try { conn.close(); } catch(e){} }
+    conn = peer.connect(pcId, { reliable: true });
+    const timer = setTimeout(() => { if (!conn.open) { connecting = false; setPill('bad', 'Não consegui falar com o computador. Estão no mesmo Wi-Fi?'); setTimeout(connect, 4000); } }, 12000);
+    conn.on('open', () => { clearTimeout(timer); connecting = false; setPill('ok', 'Conectado ao computador'); });
+    conn.on('data', d => { if (d && d.type === 'ack' && acks.has(d.id)) { acks.get(d.id)(d); acks.delete(d.id); } });
+    conn.on('close', () => { connecting = false; setPill('bad', 'Conexão perdida — reconectando…'); setTimeout(connect, 2000); });
+    conn.on('error', () => { connecting = false; });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (!conn || !conn.open)) { if (peer && peer.destroyed) peer = null; connect(); }
+  });
+  connect();
+
+  function waitAck(id, ms){
+    return new Promise(res => { acks.set(id, res); setTimeout(() => { if (acks.has(id)) { acks.delete(id); res(null); } }, ms); });
+  }
+  async function send(text){
+    if (!conn || !conn.open) { setStatus('⚠️ Sem conexão com o computador. Aguarde reconectar e leia de novo.', 'err'); connect(); return false; }
+    const id = uid();
+    for (let i = 0; i < 2; i++) {
+      setStatus(i ? 'Reenviando…' : 'Enviando…');
+      const p = waitAck(id, 4000);
+      conn.send({ type: 'scan', id, text, token });
+      const a = await p;
+      if (a) {
+        if (a.ok) { setStatus('✅ Digitado no e-SUS', 'good'); return true; }
+        setStatus('⚠️ Não digitou: ' + (a.reason || 'erro'), 'err'); return false;
+      }
+    }
+    setStatus('⚠️ O computador não respondeu.', 'err'); return false;
+  }
+
+  // Câmera ao vivo + leitura contínua
+  const video = $('video'), cv = $('cv'), ctx = cv.getContext('2d', { willReadFrequently: true });
+  let paused = false, last = '', lastAt = 0;
+  $('start').onclick = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      video.srcObject = stream; await video.play();
+      $('cam').hidden = false; $('start').hidden = true;
+      if (!conn || !conn.open) connect();
+      loop();
+    } catch (e) {
+      setStatus('⚠️ Não consegui abrir a câmera. Permita o acesso à câmera para este site nas configurações do Safari.', 'err');
+    }
+  };
+  function loop(){
+    if (!paused && video.readyState >= 2 && video.videoWidth) {
+      const sc = Math.min(1, 800 / Math.max(video.videoWidth, video.videoHeight));
+      cv.width = Math.round(video.videoWidth * sc); cv.height = Math.round(video.videoHeight * sc);
+      ctx.drawImage(video, 0, 0, cv.width, cv.height);
+      const d = ctx.getImageData(0, 0, cv.width, cv.height);
+      const code = jsQR(d.data, d.width, d.height, { inversionAttempts: 'dontInvert' });
+      if (code && code.data && !(code.data === last && Date.now() - lastAt < 4000)) {
+        last = code.data; lastAt = Date.now(); paused = true;
+        $('frame').classList.add('hit'); $('val').textContent = code.data;
+        send(code.data).finally(() => setTimeout(() => { paused = false; $('frame').classList.remove('hit'); lastAt = Date.now(); }, 1200));
+      }
+    }
+    setTimeout(() => requestAnimationFrame(loop), 120);
+  }
+}
+</script>
+</body>
+</html>
