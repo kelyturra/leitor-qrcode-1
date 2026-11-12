@@ -298,6 +298,14 @@ else {
       x.disabled = it.st === 'sending';
       x.onclick = async (e) => {
         e.stopPropagation(); if (it.st === 'sending' || it.removing) return;
+        if (it.st === 'err') {
+          it.removing = true; it.msg = 'apagando a seleção no e-SUS…'; renderList();
+          const c = await sendRaw({ action: 'cancel' });
+          it.removing = false;
+          if (!c.ok) { it.msg = c.reason || 'não consegui apagar a seleção'; beep(300, 300); renderAll(); return; }
+          const k = items.indexOf(it); if (k >= 0) { items.splice(k, 1); if (curIdx === k) curIdx = -1; else if (curIdx > k) curIdx--; }
+          paused = false; save(); renderAll(); setStatus(''); worker(); return;
+        }
         if (it.st === 'ok') {
           if (!window.confirm('Tirar ' + (it.name || it.code) + ' também do e-SUS?')) return;
           it.removing = true; it.msg = 'excluindo do e-SUS…'; renderList();
@@ -318,7 +326,7 @@ else {
     $('l-count').textContent = items.length ? done + '/' + items.length + ' lançados' : '';
     $('trash').hidden = items.length === 0 || working;
     const btn = $('send-all');
-    if (err && !working) { btn.textContent = '▶️ Continuar (' + (fila + 1) + ')'; $('footer').hidden = false; }
+    if (err && !working) { btn.textContent = '🔄 Apagar e tentar de novo (' + (fila + 1) + ')'; $('footer').hidden = false; }
     else if (cur && cur.st === '') { btn.textContent = '➡️ Enviar último' + (fila ? ' (' + fila + ' na fila)' : ''); $('footer').hidden = false; }
     else if (fila) { btn.textContent = '⏳ Lançando… ' + fila + ' na fila'; $('footer').hidden = false; }
     else if (items.length && done === items.length) { btn.textContent = finishing ? '⏳ Indo para o final…' : '⬇️ Ir para o final no e-SUS'; $('footer').hidden = false; }
@@ -374,7 +382,7 @@ else {
       it.st = 'sending'; save(); renderList();
       const a = await sendRaw({ text: it.code, code: it.code, name: it.name, qty: it.total });
       if (a.ok) { it.st = 'ok'; it.msg = a.msg || 'lançado'; }
-      else { it.st = 'err'; it.msg = a.reason || 'erro'; paused = true; beep(300, 300); setStatus('⚠️ Parei em ' + (it.name || it.code) + ': ' + it.msg + '. Resolva no e-SUS e toque em "Continuar". Se terminar esse item na mão, toque no ✕ dele.', 'err'); }
+      else { it.st = 'err'; it.msg = a.reason || 'erro'; paused = true; beep(300, 300); setStatus('⚠️ Parei em ' + (it.name || it.code) + '. Toque em "🔄 Apagar e tentar de novo", ou no ✕ do item para tirar ele e seguir.', 'err'); }
       save(); renderAll();
     }
     working = false; renderAll();
@@ -401,6 +409,7 @@ else {
     curIdx = i; save(); renderAll(); worker();
   }
 
+  const btn_busy = on => { $('send-all').disabled = on; if (on) $('send-all').textContent = '⏳ Apagando a seleção…'; };
   $('send-all').onclick = async () => {
     // Etapa final: tudo lançado → Salvar e avançar no e-SUS e começar lista nova
     if (items.length && items.every(it => it.st === 'ok') && !working) {
@@ -412,7 +421,13 @@ else {
       return;
     }
     const err = items.find(it => it.st === 'err');
-    if (err && !working) { err.st = 'fila'; paused = false; }
+    if (err && !working) {
+      btn_busy(true); setStatus('Apagando a seleção no e-SUS…');
+      const c = await sendRaw({ action: 'cancel' });
+      btn_busy(false);
+      if (!c.ok) { beep(300, 300); setStatus('⚠️ ' + (c.reason || 'não consegui apagar a seleção'), 'err'); return; }
+      err.st = 'fila'; paused = false; setStatus('');
+    }
     queueCurrent(); curIdx = -1; save(); renderAll(); worker();
   };
 
