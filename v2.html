@@ -74,7 +74,8 @@
   /* compacto */
   body{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
   .cam{aspect-ratio:1/1;width:min(100%,34vh);margin:10px auto 0}
-  .cam .frame{inset:15%}
+  .cam .frame{inset:22.5%}
+  .trash{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:2px 8px;font-size:.95rem;margin-left:8px}
   .zoom{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:8px}
   .zoom button{background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:999px;padding:6px 12px;font-weight:700;font-size:.9rem}
   .zoom button.on{background:var(--acc);color:#05140d;border-color:var(--acc)}
@@ -133,9 +134,8 @@
 
     <!-- Lista para conferir -->
     <div class="card">
-      <div class="h2"><span>Lista para conferir</span><span id="l-count" style="color:var(--mut);font-weight:400"></span></div>
+      <div class="h2"><span>Lista para conferir</span><span><span id="l-count" style="color:var(--mut);font-weight:400"></span><button class="trash" id="trash" type="button" hidden title="Limpar tudo">🗑</button></span></div>
       <div id="list"></div>
-      <button class="link" id="clear" type="button" hidden>Limpar lista</button>
     </div>
 
     <div class="card">
@@ -296,7 +296,18 @@ else {
       const q = document.createElement('div'); q.className = 'q'; q.textContent = it.total || '?';
       const x = document.createElement('button'); x.className = 'x'; x.type = 'button'; x.textContent = '✕';
       x.disabled = it.st === 'sending';
-      x.onclick = (e) => { e.stopPropagation(); if (it.st === 'sending') return; items.splice(i, 1); if (curIdx === i) curIdx = -1; else if (curIdx > i) curIdx--; save(); renderAll(); };
+      x.onclick = async (e) => {
+        e.stopPropagation(); if (it.st === 'sending' || it.removing) return;
+        if (it.st === 'ok') {
+          if (!window.confirm('Tirar ' + (it.name || it.code) + ' também do e-SUS?')) return;
+          it.removing = true; it.msg = 'excluindo do e-SUS…'; renderList();
+          const a = await sendRaw({ action: 'remove', code: it.code, name: it.name, qty: it.total });
+          it.removing = false;
+          if (!a.ok) { it.msg = 'continua no e-SUS: ' + (a.reason || 'erro'); beep(300, 300); save(); renderAll(); return; }
+        }
+        const k = items.indexOf(it); if (k < 0) return;
+        items.splice(k, 1); if (curIdx === k) curIdx = -1; else if (curIdx > k) curIdx--; save(); renderAll();
+      };
       row.onclick = () => { if (!editable(it)) return; if (it.st === 'fila') it.st = ''; curIdx = i; save(); renderAll(); $('cur').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
       row.append(nm, q, x); box.appendChild(row);
     });
@@ -305,12 +316,12 @@ else {
     const err = items.find(it => it.st === 'err');
     const cur = items[curIdx];
     $('l-count').textContent = items.length ? done + '/' + items.length + ' lançados' : '';
-    $('clear').hidden = items.length === 0 || working;
+    $('trash').hidden = items.length === 0 || working;
     const btn = $('send-all');
     if (err && !working) { btn.textContent = '▶️ Continuar (' + (fila + 1) + ')'; $('footer').hidden = false; }
     else if (cur && cur.st === '') { btn.textContent = '➡️ Enviar último' + (fila ? ' (' + fila + ' na fila)' : ''); $('footer').hidden = false; }
     else if (fila) { btn.textContent = '⏳ Lançando… ' + fila + ' na fila'; $('footer').hidden = false; }
-    else if (items.length && done === items.length) { btn.textContent = finishing ? '⏳ Salvando e avançando…' : '💾 Salvar e avançar no e-SUS'; $('footer').hidden = false; }
+    else if (items.length && done === items.length) { btn.textContent = finishing ? '⏳ Indo para o final…' : '⬇️ Ir para o final no e-SUS'; $('footer').hidden = false; }
     else $('footer').hidden = true;
     btn.disabled = finishing || !!(fila && !(cur && cur.st === '') && !(err && !working));
   }
@@ -345,7 +356,7 @@ else {
     if (v > 0) { it.total = v; if (!it.base) it.base = v; $('c-input').blur(); save(); renderAll(); } else $('c-input').focus();
   };
   $('c-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('c-set').click(); });
-  $('clear').onclick = () => { if (working) return; if (items.some(it => it.st !== 'ok') && !window.confirm('Limpar a lista? Os itens ainda não lançados serão apagados.')) return; items = []; curIdx = -1; paused = false; save(); renderAll(); setStatus('Lista limpa. Pode começar a próxima dispensação.'); };
+  $('trash').onclick = () => { if (working) return; if (items.some(it => it.st !== 'ok') && !window.confirm('Limpar a lista? Os itens ainda não lançados serão apagados.')) return; items = []; curIdx = -1; paused = false; save(); renderAll(); setStatus('Lista limpa. Pode começar a próxima dispensação.'); };
 
   // Coloca o item que estava sendo ajustado na fila
   function queueCurrent(){
@@ -367,7 +378,7 @@ else {
       save(); renderAll();
     }
     working = false; renderAll();
-    if (!paused && items.length && items.every(x => x.st === 'ok')) { setStatus('✅ Tudo lançado. Toque em "Salvar e avançar" quando terminar.', 'good'); beep(1000, 120); }
+    if (!paused && items.length && items.every(x => x.st === 'ok')) { setStatus('✅ Tudo lançado. Toque em "Ir para o final" quando terminar.', 'good'); beep(1000, 120); }
   }
 
   function addScan(r){
@@ -393,11 +404,11 @@ else {
   $('send-all').onclick = async () => {
     // Etapa final: tudo lançado → Salvar e avançar no e-SUS e começar lista nova
     if (items.length && items.every(it => it.st === 'ok') && !working) {
-      finishing = true; renderList(); setStatus('Salvando e avançando no e-SUS…');
+      finishing = true; renderList(); setStatus('Indo para o final da página no e-SUS…');
       const a = await sendRaw({ action: 'finish' });
       finishing = false;
       if (a.ok) { items = []; curIdx = -1; paused = false; save(); renderAll(); beep(900, 120); setTimeout(() => beep(1400, 160), 140); setStatus('✅ ' + (a.msg || 'Pronto!') + ' Lista nova pronta para o próximo paciente.', 'good'); }
-      else { renderAll(); beep(300, 300); setStatus('⚠️ ' + (a.reason || 'não consegui avançar') + '. Você pode clicar em "Salvar e avançar" no e-SUS.', 'err'); }
+      else { renderAll(); beep(300, 300); setStatus('⚠️ ' + (a.reason || 'não consegui ir para o final') + '. Role a página do e-SUS e clique em "Salvar e avançar".', 'err'); }
       return;
     }
     const err = items.find(it => it.st === 'err');
@@ -415,7 +426,7 @@ else {
   // ---------- Câmera ----------
   const video = $('video'), cv = $('cv'), ctx = cv.getContext('2d', { willReadFrequently: true });
   // Um QR conta de novo só depois de sair da câmera por um instante
-  let seen = '', seenAt = 0, frameN = 0, detector = null;
+  let seen = '', seenAt = 0, frameN = 0, detector = null, prevRaw = null;
   try { if ('BarcodeDetector' in window) detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
   const startCam = async (auto) => {
     try {
@@ -449,11 +460,11 @@ else {
     const saved = parseFloat(store.get('esus-zoom') || '2');
     apply(opts.includes(saved) ? saved : opts[Math.min(1, opts.length - 1)]);
   }
-  // Lê um pedaço da imagem: alterna entre o centro (mais detalhe) e a imagem inteira
+  // Lê só o centro da imagem (o quadrado branco), para não pegar etiquetas ao lado
+  const AREA = 0.55;
   function readJsQR(){
     const vw = video.videoWidth, vh = video.videoHeight;
-    let sx = 0, sy = 0, sw = vw, sh = vh, max = 720;
-    if (frameN % 2 === 0) { const side = Math.round(Math.min(vw, vh) * 0.7); sx = Math.round((vw - side) / 2); sy = Math.round((vh - side) / 2); sw = sh = side; max = 640; }
+    const side = Math.round(Math.min(vw, vh) * AREA), sx = Math.round((vw - side) / 2), sy = Math.round((vh - side) / 2), sw = side, sh = side, max = 640;
     const sc = Math.min(1, max / Math.max(sw, sh));
     cv.width = Math.round(sw * sc); cv.height = Math.round(sh * sc);
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
@@ -463,14 +474,22 @@ else {
   }
   async function readFrame(){
     if (detector) {
-      try { const r = await detector.detect(video); if (r && r.length) return r[0].rawValue; if (frameN % 3 !== 0) return null; } catch (e) { detector = null; }
+      try {
+        const r = await detector.detect(video);
+        const vw = video.videoWidth, vh = video.videoHeight, half = Math.min(vw, vh) * AREA / 2;
+        const inCenter = (r || []).filter(c => { const b = c.boundingBox, cx = b.x + b.width / 2, cy = b.y + b.height / 2; return Math.abs(cx - vw / 2) < half && Math.abs(cy - vh / 2) < half; });
+        if (inCenter.length === 1) return inCenter[0].rawValue;
+        if (frameN % 3 !== 0) return null;
+      } catch (e) { detector = null; }
     }
     return readJsQR();
   }
   async function loop(){
     if (video.readyState >= 2 && video.videoWidth) {
       frameN++;
-      const data = await readFrame();
+      const raw = await readFrame();
+      const data = (raw && raw === prevRaw) ? raw : null;   // só aceita se ler igual 2 vezes seguidas
+      prevRaw = raw;
       const now = Date.now();
       if (data) {
         const isNew = data !== seen || now - seenAt > 1000;
