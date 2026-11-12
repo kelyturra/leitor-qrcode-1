@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Leitor e-SUS">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0f1115">
+<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAACnUlEQVR42u3dsXECMRBA0UXjnCGgDTK358DtOXNFbsABHFrptHq/AeaYNysOoeNyvd1D+q/mLRAcgkNwCA7BITgEh+BQ9T6mvOrj59tb/2q/n1+DX/Ey7OtzIJaDko6DiXWVZOFgooCSRkaNMt7zzpMDi0ojpJFhhORODixKjpBGhhGShYOMwj4aGXz0x0FGeR+NDD564iBjEx+27NUPh7Gxz/BoZPBhWVHmsmJs7DY8Ghl8WFbk1+cajMOasufKYnIoJp9bGX/mInvy1buiI5PDmrLtymJZERyCQ+Nw+MCx88cOk0MnewSDO8wlrsjkEByCQ3AIDsEht7Kd79xW+YJu3SsyOQSH4BAcgkNwCA7BITgEh+CQ4BAcioK7svUOQ6x7RSaH4BAcgkNwCA65lY1TnWt1RSaH4BAcgkNwCA65lQ17rSaHLCuCw1sgOASH4BAcgkNwCA7BITgEhxRnPysb5Z427AnGsqwIDgkOwSE4BIfgEByCQ3AIDsGhsCsbtZ+H9Pxu59y91rPt35ocgkNwCA7BITjkB8Yj7sfqPRXZ5BAcgkNwCA7BIZ39rOzcnUlnZU0OwSE4BIfgEByCQ3AIDsEhwSE4BIei+K7s3J1JZ2VNDsEhOASH4BAccivrXKvJITgEh8kf/tPO5JBlRXCob5fr7R6rneHUmK8STA7BoSQcbmj3/GN2k0NwKA+HlWW3NeW1ycHHVjIsK+qHw/DYZ2wcmRx8bCLDsqLeOAyPHcbG8cnBR3kZby0rfNSW8e5nDj4Ky+jwgZSPqjL63K3wUVJGPPlLsFjzof9YnGhX1gipJKPz5DBCyrBI/IbUCKlx8DhlcpgiNQ6jp+OgZN3ZPA4HKMst1nNwKPzAWHAIDsEhwSE4BIfg0Lj+AExDwQkDUTnKAAAAAElFTkSuQmCC">
 <title>Leitor QR → e-SUS</title>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
@@ -98,7 +103,10 @@
         <li>No computador, clique no ícone da extensão <b>Leitor QR → e-SUS</b> no Firefox.</li>
         <li>Aponte a <b>câmera normal do iPhone</b> para o QR que aparece e toque no link.</li>
       </ol>
+      <div class="code" style="margin-top:8px">Usando o app da tela de início? Toque abaixo e aponte para o QR de pareamento da extensão.</div>
     </div>
+    <div class="cam" id="pcam" hidden><video id="pvideo" playsinline muted autoplay></video><div class="frame"></div></div>
+    <button class="btn" id="pstart" type="button">📸 Escanear QR de pareamento</button>
   </section>
 
   <section id="v-main" hidden>
@@ -177,7 +185,38 @@ function parse(text){
   return { code, qty, item: MAPA.get(code.toUpperCase()) || null };
 }
 
-if (!pair) { $('v-unpaired').hidden = false; }
+// QR de pareamento da extensão (link com #p=ID.TOKEN)
+function pairFrom(text){
+  const mm = String(text).match(/#p=([a-z0-9-]+)\.([a-z0-9]+)/i);
+  if (!mm) return false;
+  store.set('esus-pair', mm[1] + '.' + mm[2]);
+  setTimeout(() => location.reload(), 300);
+  return true;
+}
+
+if (!pair) {
+  $('v-unpaired').hidden = false;
+  $('pstart').onclick = async () => {
+    try {
+      const v = $('pvideo');
+      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      v.srcObject = st; await v.play(); $('pcam').hidden = false; $('pstart').hidden = true;
+      const c = document.createElement('canvas'), x = c.getContext('2d', { willReadFrequently: true });
+      const tick = () => {
+        if (v.videoWidth) {
+          const sc = Math.min(1, 800 / Math.max(v.videoWidth, v.videoHeight));
+          c.width = Math.round(v.videoWidth * sc); c.height = Math.round(v.videoHeight * sc);
+          x.drawImage(v, 0, 0, c.width, c.height);
+          const d = x.getImageData(0, 0, c.width, c.height);
+          const q = jsQR(d.data, d.width, d.height, { inversionAttempts: 'dontInvert' });
+          if (q && q.data && pairFrom(q.data)) return;
+        }
+        setTimeout(tick, 80);
+      };
+      tick();
+    } catch (e) { alert('Não consegui abrir a câmera. Permita o acesso à câmera.'); }
+  };
+}
 else {
   $('v-main').hidden = false;
   const [pcId, token] = pair.split('.');
@@ -351,6 +390,7 @@ else {
   };
 
   async function onCode(text){
+    if (pairFrom(text)) { setStatus('Pareando de novo…'); return; }
     const r = parse(text);
     $('val').textContent = text;
     if ($('opt-raw').checked) { busy = true; const a = await sendRaw({ text: r.code }); busy = false; setStatus(a.ok ? '✅ ' + (a.msg || 'digitado') : '⚠️ ' + a.reason, a.ok ? 'good' : 'err'); return; }
