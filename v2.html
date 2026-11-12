@@ -135,16 +135,15 @@
     <div class="card">
       <div class="h2"><span>Lista para conferir</span><span id="l-count" style="color:var(--mut);font-weight:400"></span></div>
       <div id="list"></div>
-      <div class="code" id="l-empty">Escaneie os medicamentos. Eles vão aparecer aqui.</div>
-      <button class="btn sec" id="clear" type="button" hidden>🗑 Limpar lista (nova dispensação)</button>
+      <button class="link" id="clear" type="button" hidden>Limpar lista</button>
     </div>
 
     <div class="card">
-      <div class="status" id="status">Aponte a câmera para o QR Code do medicamento.</div>
+      <div class="status" id="status"></div>
       <div class="val" id="val"></div>
     </div>
 
-    <label class="tg"><input type="checkbox" id="opt-raw"> Só digitar o código (sem lista e sem quantidades)</label>
+    <label class="tg"><input type="checkbox" id="opt-bip"> Bipe ao ler e ao lançar</label>
     <button class="link" id="unpair" type="button">Desparear este celular</button>
   </section>
 </div>
@@ -170,11 +169,19 @@ const pair = store.get('esus-pair');
 function setPill(cls, t){ $('pill').className = 'pill ' + cls; $('pill-t').textContent = t; }
 function setStatus(t, cls){ const s=$('status'); s.textContent=t; s.className='status' + (cls ? ' '+cls : ''); }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
-function vib(){ try{ navigator.vibrate && navigator.vibrate(60); }catch(e){} }
+// Bipe curto (o iPhone não vibra por páginas da internet)
+let AC = null;
+function beep(freq, ms){ if (store.get('esus-bip') === '0') return; try{ AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); const o = AC.createOscillator(), g = AC.createGain(); o.frequency.value = freq || 1200; g.gain.value = 0.08; o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + (ms || 90) / 1000); }catch(e){} }
+function vib(){ beep(1300, 80); try{ navigator.vibrate && navigator.vibrate(60); }catch(e){} }
+document.addEventListener('touchstart', () => { try{ AC = AC || new (window.AudioContext || window.webkitAudioContext)(); AC.resume(); }catch(e){} }, { once: true });
+// Mantém a tela acesa enquanto o app está aberto
+let wakeLock = null;
+async function keepAwake(){ try{ if ('wakeLock' in navigator && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); }catch(e){} }
+document.addEventListener('visibilitychange', keepAwake);
 
 $('unpair').onclick = () => { store.del('esus-pair'); location.reload(); };
-$('opt-raw').checked = store.get('esus-raw') === '1';
-$('opt-raw').onchange = () => store.set('esus-raw', $('opt-raw').checked ? '1' : '0');
+$('opt-bip').checked = store.get('esus-bip') !== '0';
+$('opt-bip').onchange = () => { store.set('esus-bip', $('opt-bip').checked ? '1' : '0'); if ($('opt-bip').checked) beep(1300, 80); };
 
 // Lê "CODIGO" ou "CODIGO;QTD"
 function parse(text){
@@ -271,7 +278,7 @@ else {
   let items = [];
   try { items = JSON.parse(store.get('esus-lista') || '[]'); } catch (e) { items = []; }
   items.forEach(it => { if (it.st === 'sending') it.st = 'fila'; });
-  let curIdx = -1, busy = false, working = false, paused = false;
+  let curIdx = -1, busy = false, working = false, paused = false, finishing = false;
   const save = () => store.set('esus-lista', JSON.stringify(items));
   const editable = it => it && (it.st === '' || it.st === 'fila' || it.st === 'err');
 
@@ -298,14 +305,14 @@ else {
     const err = items.find(it => it.st === 'err');
     const cur = items[curIdx];
     $('l-count').textContent = items.length ? done + '/' + items.length + ' lançados' : '';
-    $('l-empty').hidden = items.length > 0;
     $('clear').hidden = items.length === 0 || working;
     const btn = $('send-all');
     if (err && !working) { btn.textContent = '▶️ Continuar (' + (fila + 1) + ')'; $('footer').hidden = false; }
     else if (cur && cur.st === '') { btn.textContent = '➡️ Enviar último' + (fila ? ' (' + fila + ' na fila)' : ''); $('footer').hidden = false; }
     else if (fila) { btn.textContent = '⏳ Lançando… ' + fila + ' na fila'; $('footer').hidden = false; }
+    else if (items.length && done === items.length) { btn.textContent = finishing ? '⏳ Salvando e avançando…' : '💾 Salvar e avançar no e-SUS'; $('footer').hidden = false; }
     else $('footer').hidden = true;
-    btn.disabled = !!(fila && !(cur && cur.st === '') && !(err && !working));
+    btn.disabled = finishing || !!(fila && !(cur && cur.st === '') && !(err && !working));
   }
   function renderCur(){
     const it = items[curIdx];
@@ -355,12 +362,12 @@ else {
       if (!it) break;
       it.st = 'sending'; save(); renderList();
       const a = await sendRaw({ text: it.code, code: it.code, name: it.name, qty: it.total });
-      if (a.ok) { it.st = 'ok'; it.msg = a.msg || 'lançado'; vib(); }
-      else { it.st = 'err'; it.msg = a.reason || 'erro'; paused = true; setStatus('⚠️ Parei em ' + (it.name || it.code) + ': ' + it.msg + '. Resolva no e-SUS e toque em "Continuar". Se terminar esse item na mão, toque no ✕ dele.', 'err'); }
+      if (a.ok) { it.st = 'ok'; it.msg = a.msg || 'lançado'; }
+      else { it.st = 'err'; it.msg = a.reason || 'erro'; paused = true; beep(300, 300); setStatus('⚠️ Parei em ' + (it.name || it.code) + ': ' + it.msg + '. Resolva no e-SUS e toque em "Continuar". Se terminar esse item na mão, toque no ✕ dele.', 'err'); }
       save(); renderAll();
     }
     working = false; renderAll();
-    if (!paused && items.length && items.every(x => x.st === 'ok')) setStatus('✅ Tudo lançado! Confira no e-SUS e finalize a dispensação. Depois toque em "Limpar lista".', 'good');
+    if (!paused && items.length && items.every(x => x.st === 'ok')) { setStatus('✅ Tudo lançado. Toque em "Salvar e avançar" quando terminar.', 'good'); beep(1000, 120); }
   }
 
   function addScan(r){
@@ -372,18 +379,27 @@ else {
       if (i !== curIdx) queueCurrent();
       if (r.qty) { it.total = (it.total || 0) + r.qty; if (!it.base) it.base = r.qty; }
       it.st = '';
-      setStatus('Somado: ' + (name || r.code) + ' = ' + it.total);
+      setStatus('');
     } else {
       queueCurrent();
       const base = r.qty || (qtys.length === 1 ? qtys[0] : 0);
       items.push({ code: r.code, name, qtys, base, total: base, st: '' });
       i = items.length - 1;
-      setStatus(base ? 'Lido: ' + (name || r.code) + ' — ' + base + '. Leia o próximo.' : 'Escolha a quantidade de ' + (name || r.code));
+      setStatus(base ? '' : 'Escolha a quantidade de ' + (name || r.code));
     }
     curIdx = i; save(); renderAll(); worker();
   }
 
-  $('send-all').onclick = () => {
+  $('send-all').onclick = async () => {
+    // Etapa final: tudo lançado → Salvar e avançar no e-SUS e começar lista nova
+    if (items.length && items.every(it => it.st === 'ok') && !working) {
+      finishing = true; renderList(); setStatus('Salvando e avançando no e-SUS…');
+      const a = await sendRaw({ action: 'finish' });
+      finishing = false;
+      if (a.ok) { items = []; curIdx = -1; paused = false; save(); renderAll(); beep(900, 120); setTimeout(() => beep(1400, 160), 140); setStatus('✅ ' + (a.msg || 'Pronto!') + ' Lista nova pronta para o próximo paciente.', 'good'); }
+      else { renderAll(); beep(300, 300); setStatus('⚠️ ' + (a.reason || 'não consegui avançar') + '. Você pode clicar em "Salvar e avançar" no e-SUS.', 'err'); }
+      return;
+    }
     const err = items.find(it => it.st === 'err');
     if (err && !working) { err.st = 'fila'; paused = false; }
     queueCurrent(); curIdx = -1; save(); renderAll(); worker();
@@ -392,8 +408,6 @@ else {
   async function onCode(text){
     if (pairFrom(text)) { setStatus('Pareando de novo…'); return; }
     const r = parse(text);
-    $('val').textContent = text;
-    if ($('opt-raw').checked) { busy = true; const a = await sendRaw({ text: r.code }); busy = false; setStatus(a.ok ? '✅ ' + (a.msg || 'digitado') : '⚠️ ' + a.reason, a.ok ? 'good' : 'err'); return; }
     addScan(r);
   }
   renderAll(); worker();
@@ -403,7 +417,7 @@ else {
   // Um QR conta de novo só depois de sair da câmera por um instante
   let seen = '', seenAt = 0, frameN = 0, detector = null;
   try { if ('BarcodeDetector' in window) detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
-  $('start').onclick = async () => {
+  const startCam = async (auto) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
       video.srcObject = stream; await video.play();
@@ -412,11 +426,14 @@ else {
       setupZoom(tr);
       $('cam').hidden = false; $('start').hidden = true;
       if (!conn || !conn.open) connect();
+      keepAwake();
       loop();
     } catch (e) {
-      setStatus('⚠️ Não consegui abrir a câmera. Permita o acesso à câmera para este site nas configurações do Safari.', 'err');
+      if (!auto) setStatus('⚠️ Não consegui abrir a câmera. Permita o acesso à câmera para este site nas configurações do Safari.', 'err');
     }
   };
+  $('start').onclick = () => startCam(false);
+  startCam(true);
   // Zoom (se o aparelho permitir): ajuda quando a câmera não foca de perto
   function setupZoom(tr){
     let caps = {};
