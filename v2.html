@@ -74,7 +74,7 @@
   /* compacto */
   body{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
   .cam{aspect-ratio:1/1;width:min(100%,34vh);margin:10px auto 0}
-  .cam .frame{inset:22.5%}
+  .cam .frame{inset:12.5%}
   .trash{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:2px 8px;font-size:.95rem;margin-left:8px}
   .zoom{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center;gap:8px}
   .zoom button{background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.5);border-radius:999px;padding:6px 12px;font-weight:700;font-size:.9rem}
@@ -329,7 +329,7 @@ else {
     if (err && !working) { btn.textContent = '🔄 Apagar e tentar de novo (' + (fila + 1) + ')'; $('footer').hidden = false; }
     else if (cur && cur.st === '') { btn.textContent = '➡️ Enviar último' + (fila ? ' (' + fila + ' na fila)' : ''); $('footer').hidden = false; }
     else if (fila) { btn.textContent = '⏳ Lançando… ' + fila + ' na fila'; $('footer').hidden = false; }
-    else if (items.length && done === items.length) { btn.textContent = finishing ? '⏳ Indo para o final…' : '⬇️ Ir para o final no e-SUS'; $('footer').hidden = false; }
+    else if (items.length && done === items.length) { btn.textContent = finishing ? '⏳ Dispensando…' : '✅ Finalizar e dispensar'; $('footer').hidden = false; }
     else $('footer').hidden = true;
     btn.disabled = finishing || !!(fila && !(cur && cur.st === '') && !(err && !working));
   }
@@ -386,7 +386,7 @@ else {
       save(); renderAll();
     }
     working = false; renderAll();
-    if (!paused && items.length && items.every(x => x.st === 'ok')) { setStatus('✅ Tudo lançado. Toque em "Ir para o final" quando terminar.', 'good'); beep(1000, 120); }
+    if (!paused && items.length && items.every(x => x.st === 'ok')) { setStatus('✅ Tudo lançado. Toque em "Finalizar e dispensar" quando terminar.', 'good'); beep(1000, 120); }
   }
 
   function addScan(r){
@@ -413,11 +413,11 @@ else {
   $('send-all').onclick = async () => {
     // Etapa final: tudo lançado → Salvar e avançar no e-SUS e começar lista nova
     if (items.length && items.every(it => it.st === 'ok') && !working) {
-      finishing = true; renderList(); setStatus('Indo para o final da página no e-SUS…');
+      finishing = true; renderList(); setStatus('Finalizando a dispensação no e-SUS…');
       const a = await sendRaw({ action: 'finish' });
       finishing = false;
       if (a.ok) { items = []; curIdx = -1; paused = false; save(); renderAll(); beep(900, 120); setTimeout(() => beep(1400, 160), 140); setStatus('✅ ' + (a.msg || 'Pronto!') + ' Lista nova pronta para o próximo paciente.', 'good'); }
-      else { renderAll(); beep(300, 300); setStatus('⚠️ ' + (a.reason || 'não consegui ir para o final') + '. Role a página do e-SUS e clique em "Salvar e avançar".', 'err'); }
+      else { renderAll(); beep(300, 300); setStatus('⚠️ ' + (a.reason || 'não consegui finalizar') + '. Confira a tela do e-SUS.', 'err'); }
       return;
     }
     const err = items.find(it => it.st === 'err');
@@ -476,7 +476,7 @@ else {
     apply(opts.includes(saved) ? saved : opts[Math.min(1, opts.length - 1)]);
   }
   // Lê só o centro da imagem (o quadrado branco), para não pegar etiquetas ao lado
-  const AREA = 0.55;
+  const AREA = 0.75;
   function readJsQR(){
     const vw = video.videoWidth, vh = video.videoHeight;
     const side = Math.round(Math.min(vw, vh) * AREA), sx = Math.round((vw - side) / 2), sy = Math.round((vh - side) / 2), sw = side, sh = side, max = 640;
