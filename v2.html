@@ -13,6 +13,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
 <script src="catmat.js"></script>
+<script src="receita-core.js"></script>
 <style>
   :root{--bg:#0f1115;--card:#1a1d24;--txt:#f2f3f5;--mut:#9aa0ab;--acc:#3ddc97;--err:#ff6b6b;--warn:#ffc857;--line:#2a2e37}
   *{box-sizing:border-box}
@@ -92,6 +93,17 @@
   .other input{font-size:1.2rem;padding:8px}
   .footer{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(15,17,21,.96);border-top:1px solid var(--line);z-index:10}
   .footer .btn{margin:0 auto;max-width:520px;padding:15px}
+  .modes{display:flex;gap:8px;margin:10px 0}
+  .mode{flex:1;padding:18px 8px;border-radius:14px;border:2px solid var(--line);background:var(--card);color:var(--txt);font:700 1.1rem -apple-system,system-ui}
+  .mode.on{border-color:var(--acc);background:#14301f}
+  .modes.small .mode{padding:10px 6px;font-size:.95rem}
+  .rxc{border-top:1px solid var(--line);padding:10px 0}
+  .rxc select{width:100%;padding:8px;border-radius:8px;background:var(--bg);color:var(--txt);border:1px solid var(--line);font-size:.95rem}
+  .rxc .q{width:90px;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font:700 1.2rem -apple-system,system-ui}
+  .rxc .rt{color:var(--mut);font-size:.8rem;margin:4px 0}
+  .rxc .ct{font-size:.85rem}.rxc .av{color:var(--warn);font-size:.85rem}
+  .bd{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:700;background:#2a2e37}
+  .bd.ok{background:#14301f;color:var(--acc)}.bd.conferir{background:#3a3010;color:var(--warn)}.bd.bloqueado,.bd.nao_temos{background:#3a1515;color:var(--err)}
 </style>
 </head>
 <body>
@@ -113,12 +125,19 @@
 
   <section id="v-main" hidden>
     <span class="pill" id="pill"><span class="dot"></span><span id="pill-t">Conectando ao computador…</span></span>
+    <div class="modes" id="modes"><button type="button" class="mode" id="m-qr">📦 Ler QR Code</button><button type="button" class="mode" id="m-rx">📄 Ler receita</button></div>
+    <div id="rx" hidden>
+      <label class="btn" for="rx-file" style="display:block;text-align:center">📸 Fotografar receita</label>
+      <input type="file" id="rx-file" accept="image/*" capture="environment" hidden>
+      <div class="card"><div class="status" id="rx-st">Tire a foto da receita de perto, reta e com boa luz. A leitura é feita no próprio celular.</div><div id="rx-list"></div></div>
+      <button class="btn" id="rx-ok" type="button" hidden>➕ Mandar para a lista</button>
+    </div>
     <div class="cam" id="cam" hidden>
       <video id="video" playsinline muted autoplay></video>
       <div class="frame" id="frame"></div>
       <div class="zoom" id="zoom" hidden></div>
     </div>
-    <button class="btn" id="start" type="button">📸 Abrir câmera</button>
+    <button class="btn" id="start" type="button" hidden>📸 Abrir câmera</button>
 
     <!-- Item que está sendo ajustado -->
     <div class="card acc" id="cur" hidden>
@@ -460,7 +479,86 @@ else {
     }
   };
   $('start').onclick = () => startCam(false);
-  startCam(true);
+  // ---------- Escolha: QR Code ou receita ----------
+  let modo = '';
+  function setModo(m){
+    modo = m; $('modes').classList.add('small');
+    $('m-qr').classList.toggle('on', m === 'qr'); $('m-rx').classList.toggle('on', m === 'rx');
+    $('rx').hidden = m !== 'rx';
+    if (m === 'qr') { if (!video.srcObject) { $('start').hidden = false; startCam(true); } else $('cam').hidden = false; }
+    else { $('cam').hidden = true; $('start').hidden = true; if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; } }
+  }
+  $('m-qr').onclick = () => setModo('qr');
+  $('m-rx').onclick = () => setModo('rx');
+
+  // ---------- Leitura de receita (no próprio celular) ----------
+  let rxTab = null, rxWorker = null, rxRows = [];
+  const NOMES = new Map(LISTA.map(x => [x[0], x[1]]));
+  const rxSt = (t, cls) => { $('rx-st').textContent = t; $('rx-st').className = 'status' + (cls ? ' ' + cls : ''); };
+  async function carregarTesseract(){
+    if (window.Tesseract) return;
+    await new Promise((ok, err) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'; sc.onload = ok; sc.onerror = err; document.head.appendChild(sc); });
+  }
+  $('rx-file').onchange = async () => {
+    const f = $('rx-file').files[0]; $('rx-file').value = ''; if (!f) return;
+    $('rx-ok').hidden = true; $('rx-list').innerHTML = '';
+    try {
+      rxSt('⏳ Preparando a leitura…');
+      if (!rxTab) { const a = await sendRaw({ action: 'tabela' }); if (a && a.ok && a.data) rxTab = a.data; }
+      const img = await new Promise((ok, err) => { const i = new Image(); i.onload = () => ok(i); i.onerror = err; i.src = URL.createObjectURL(f); });
+      const sc = Math.min(1, 2400 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * sc); c.height = Math.round(img.naturalHeight * sc);
+      const x = c.getContext('2d'); x.drawImage(img, 0, 0, c.width, c.height);
+      const d = x.getImageData(0, 0, c.width, c.height), p = d.data;
+      for (let i = 0; i < p.length; i += 4) { const g = 0.3 * p[i] + 0.59 * p[i + 1] + 0.11 * p[i + 2]; p[i] = p[i + 1] = p[i + 2] = Math.max(0, Math.min(255, (g - 128) * 1.4 + 140)); }
+      x.putImageData(d, 0, 0);
+      await carregarTesseract();
+      if (!rxWorker) rxWorker = await Tesseract.createWorker('por', 1, { logger: m => { if (m.status === 'recognizing text') rxSt('⏳ Lendo a receita… ' + Math.round(m.progress * 100) + '%'); else if (/load/.test(m.status)) rxSt('⏳ Baixando o leitor (só na 1ª vez)…'); } });
+      const { data } = await rxWorker.recognize(c);
+      const res = ReceitaCore.analisar(data.text, LISTA, rxTab || { apres: {}, marcas: [] });
+      rxRows = [];
+      for (const r of res) { if (!r.itens.length) rxRows.push({ r, code: '', qtd: 0 }); else r.itens.forEach(i => rxRows.push({ r, code: i.code, qtd: i.qtd })); }
+      rxRender();
+      if (!res.length) rxSt('⚠️ Não reconheci remédios. Tire outra foto mais de perto.', 'err');
+      else rxSt('✅ Li ' + res.length + ' remédio(s). Confira e toque em "Mandar para a lista".' + (rxTab ? '' : ' (Sem a tabela do computador: confira cartelas e nomes comerciais.)'), 'good');
+    } catch (e) { rxSt('⚠️ Não consegui ler: ' + (e && e.message || e), 'err'); }
+  };
+  function rxRender(){
+    const box = $('rx-list'); box.innerHTML = '';
+    rxRows.forEach((l, i) => {
+      const d = document.createElement('div'); d.className = 'rxc';
+      const bd = document.createElement('span'); bd.className = 'bd ' + l.r.status; bd.textContent = { ok: 'ok', conferir: 'conferir', bloqueado: 'não dispensar', nao_temos: 'não temos', fora_lista: 'fora da lista' }[l.r.status] || l.r.status;
+      const x = document.createElement('button'); x.type = 'button'; x.textContent = '✕'; x.style.cssText = 'float:right;background:none;border:0;color:var(--mut);font-size:1.2rem'; x.onclick = () => { rxRows.splice(i, 1); rxRender(); };
+      const rt = document.createElement('div'); rt.className = 'rt'; rt.textContent = l.r.receita.slice(0, 140);
+      d.append(x, bd, rt);
+      if (l.code) {
+        const sel = document.createElement('select');
+        const alts = (l.r.alternativas && l.r.alternativas.length) ? l.r.alternativas : LISTA.map(y => y[0]);
+        alts.forEach(cd => { const o = document.createElement('option'); o.value = cd; o.textContent = NOMES.get(cd) || cd; o.selected = cd === l.code; sel.appendChild(o); });
+        sel.onchange = () => { l.code = sel.value; };
+        const q = document.createElement('input'); q.className = 'q'; q.type = 'number'; q.inputMode = 'numeric'; q.value = l.qtd || ''; q.oninput = () => { l.qtd = parseInt(q.value, 10) || 0; rxBtn(); };
+        const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0'; row.append(q);
+        const ct = document.createElement('span'); ct.className = 'ct'; ct.textContent = l.r.conta || ''; row.append(ct);
+        d.append(sel, row);
+      }
+      if (l.r.avisos.length) { const av = document.createElement('div'); av.className = 'av'; av.textContent = '⚠️ ' + l.r.avisos.join(' · '); d.append(av); }
+      box.appendChild(d);
+    });
+    rxBtn();
+  }
+  const rxEnviaveis = () => rxRows.filter(l => l.code && l.qtd > 0 && l.r.status !== 'bloqueado' && l.r.status !== 'nao_temos');
+  function rxBtn(){ const n = rxEnviaveis().length; $('rx-ok').hidden = !n; $('rx-ok').textContent = '➕ Mandar para a lista (' + n + ')'; }
+  $('rx-ok').onclick = () => {
+    queueCurrent(); curIdx = -1;
+    let rep = 0;
+    for (const l of rxEnviaveis()) {
+      const it = items.find(y => y.code.toUpperCase() === l.code.toUpperCase() && (y.st === '' || y.st === 'fila'));
+      if (it) { it.total += l.qtd; it.st = 'fila'; }
+      else { if (items.some(y => y.code.toUpperCase() === l.code.toUpperCase() && y.st === 'ok')) rep++; items.push({ code: l.code, name: NOMES.get(l.code) || '', qtys: [], base: l.qtd, total: l.qtd, st: 'fila' }); }
+    }
+    rxRows = []; rxRender(); save(); renderAll(); worker();
+    rxSt(rep ? '⚠️ Algum remédio já tinha sido lançado — o e-SUS não aceita repetido.' : '✅ Mandei para a lista. Pode fotografar a próxima receita.', rep ? 'err' : 'good');
+  };
   // Zoom (se o aparelho permitir): ajuda quando a câmera não foca de perto
   function setupZoom(tr){
     let caps = {};
