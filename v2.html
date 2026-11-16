@@ -86,6 +86,7 @@
   .mults{display:flex;gap:6px;overflow-x:auto;margin-top:8px;grid-template-columns:none}
   .mb{flex:1 1 0;padding:9px 0;font-size:.95rem;border-radius:10px;min-width:0}
   .chips{margin-top:8px}
+  .chip.on{background:var(--acc);color:#fff;border-color:var(--acc)}
   .chip{padding:8px 14px}
   .other{margin-top:8px}
   .other input{font-size:1.2rem;padding:8px}
@@ -353,7 +354,7 @@ else {
     ed.onclick = () => { $('c-other').hidden = false; $('c-input').focus(); };
     box.appendChild(ed);
     const chips = $('c-chips'); chips.innerHTML = '';
-    (it.base ? [] : (it.qtys || [])).forEach(q => { const c = document.createElement('button'); c.type = 'button'; c.className = 'chip'; c.textContent = q; c.onclick = () => { it.base = q; it.total = q; save(); renderAll(); }; chips.appendChild(c); });
+    ((!it.base || (it.qtys || []).length > 1) ? (it.qtys || []) : []).forEach(q => { const c = document.createElement('button'); c.type = 'button'; c.className = 'chip' + (it.total === q ? ' on' : ''); c.textContent = q; c.onclick = () => { it.base = q; it.total = q; save(); renderAll(); }; chips.appendChild(c); });
     $('c-input').value = '';
     $('c-other').hidden = !!it.base && !!(it.qtys || []).length;
   }
