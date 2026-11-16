@@ -64,7 +64,7 @@ var ReceitaCore = (function () {
 
   const NUM = { UM: 1, UMA: 1, DOIS: 2, DUAS: 2, TRES: 3, MEIO: 0.5, MEIA: 0.5 };
   function posologia(txt) {
-    const t = N(txt).replace(/½/g, ' 1/2 ');
+    const t = N(txt).replace(/½/g, ' 1/2 ').replace(/(\d)([A-Z])/g, '$1 $2').replace(/([A-Z])(\d)/g, '$1 $2');
     const p = { dose: null, un: '', freq: null, dias: null, continuo: false, sos: false, unica: false };
     const nd = s => s == null ? null : (s === '1/2' ? 0.5 : NUM[s] != null ? NUM[s] : parseFloat(String(s).replace(',', '.')));
     const UNID = '(COMPRIMIDOS?|COMP\\.?|CPRS?|CPS?|CAPSULAS?|CAPS\\.?|ML|GOTAS?|MEDIDAS?|JATOS?|APLICACOES|TUBOS?|BISNAGAS?)';
@@ -73,7 +73,7 @@ var ReceitaCore = (function () {
     let m = t.match(new RegExp('(TOMAR|INGERIR|DAR|USAR|APLICAR|PINGAR)\\s+' + QTD + '\\s*' + UNID + '?'));
     if (m) { p.dose = nd(m[2]); p.un = unOf(m[3]); }
     else { m = t.replace(/(CX|CAIXA)\.?\s*(C\/|COM)?\s*\d+\s*\w+/g, ' ').match(new RegExp('(^|\\s)' + QTD + '\\s*' + UNID + '\\b')); if (m) { p.dose = nd(m[2]); p.un = unOf(m[3]); } }
-    m = t.match(/(\d{1,2})\s*\/\s*(\d{1,2})\s*H/) || t.match(/(\d{1,2})\s*EM\s*(\d{1,2})\s*H/) || t.match(/A CADA\s*()(\d{1,2})\s*H/);
+    m = t.match(/(\d{1,2})\s*\/\s*(\d{1,2})\s*H/) || t.match(/(\d{1,2})\s*EM\w?\s*(\d{1,2})\s*H/) || t.match(/A CADA\s*()(\d{1,2})\s*H/);
     if (m) p.freq = 24 / parseInt(m[2], 10);
     if (!p.freq) { m = t.match(/(\d)\s*(X|VEZES)\s*(AO|POR)\s*DIA/); if (m) p.freq = parseInt(m[1], 10); }
     if (!p.freq) { m = t.match(/(\d)\s*(X|VEZES)\s*(AO|POR|NA)\s*SEMANA/); if (m) p.freq = parseInt(m[1], 10) / 7; }
@@ -115,19 +115,24 @@ var ReceitaCore = (function () {
   }
 
   const num = v => { const x = parseFloat(String(v || '').replace(',', '.')); return isNaN(x) ? 0 : x; };
-  function calcular(item, mult, p, avisos) {
+  function calcular(item, mult, p0, avisos) {
+    let p = p0;
     const t = item.t || {};
     const cart = num(t.cartela), mlF = num(t.ml) || (item.forma === 'liquido' && item.forca ? 0 : 0);
     const nome = N(item.nome);
     if (item.forma === 'solido') {
       if (p.sos && !p.continuo) return { qtd: num(t.sos) || 20, conta: 'se dor/febre → ' + (num(t.sos) || 20) };
       if (p.unica) { const q = (p.dose || 1) * mult; return { qtd: q, conta: 'dose única = ' + q }; }
-      const dias = p.continuo ? 60 : p.dias;
-      if (!p.freq || !dias) { avisos.push('posologia incompleta'); return { qtd: 0, conta: 'faltou ' + (!p.freq ? 'frequência' : 'tempo de uso') }; }
+      // Sem posologia completa: considera 1 por dia e 60 dias (regra da Kely) e pede conferência
+      let dias = p.continuo ? 60 : p.dias, freq = p.freq;
+      if (!freq) { freq = 1; avisos.push('sem posologia na receita: considerei 1 vez ao dia'); }
+      if (!dias) { dias = 60; avisos.push('sem tempo de uso: considerei 60 dias'); }
+      p = { ...p, freq };
       const dose = (p.dose || 1) * mult;
       let q = Math.ceil(dose * p.freq * dias - 1e-9);
       let conta = (dose) + ' × ' + (+p.freq.toFixed(2)) + '/dia × ' + dias + ' dias' + (p.continuo ? ' (uso contínuo)' : '') + ' = ' + q;
-      if (cart > 0 && q % cart) { const q2 = Math.ceil(q / cart) * cart; conta += ' → cartela de ' + cart + ' → ' + q2; q = q2; }
+      const cx = num(t.caixa), emb = cart > 0 ? cart : cx;
+      if (emb > 0 && q % emb) { const q2 = Math.ceil(q / emb) * emb; conta += ' → ' + (cart > 0 ? 'cartela' : 'caixa') + ' de ' + emb + ' → ' + q2; q = q2; }
       if (p.continuo && /DIPIRONA|PARACETAMOL/.test(nome)) avisos.push('uso contínuo: conferir (às vezes 120 / 40)');
       return { qtd: q, conta };
     }
