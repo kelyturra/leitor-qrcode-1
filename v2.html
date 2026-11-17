@@ -271,7 +271,7 @@ else {
     if (conn) { try { conn.close(); } catch(e){} }
     conn = peer.connect(pcId, { reliable: true });
     const timer = setTimeout(() => { if (!conn.open) { connecting = false; setPill('bad', 'Não consegui falar com o computador. Estão na mesma rede?'); setTimeout(connect, 4000); } }, 12000);
-    conn.on('open', () => { clearTimeout(timer); connecting = false; setPill('ok', 'Conectado ao computador'); });
+    conn.on('open', () => { clearTimeout(timer); connecting = false; setPill('ok', 'Conectado ao computador'); setTimeout(() => { if (!paused && items.some(x => x.st === 'fila')) worker(); }, 300); });
     conn.on('data', d => { if (d && d.type === 'ack' && acks.has(d.id)) { acks.get(d.id)(d); acks.delete(d.id); } });
     conn.on('close', () => { connecting = false; setPill('bad', 'Conexão perdida — reconectando…'); setTimeout(connect, 2000); });
     conn.on('error', () => { connecting = false; });
@@ -284,8 +284,20 @@ else {
   function waitAck(id, ms){
     return new Promise(res => { acks.set(id, res); setTimeout(() => { if (acks.has(id)) { acks.delete(id); res(null); } }, ms); });
   }
+  // Espera a conexão voltar (ex.: depois de tirar a foto o iPhone derruba a conexão por alguns segundos)
+  async function waitConn(ms){
+    const fim = Date.now() + ms;
+    while (Date.now() < fim) {
+      if (conn && conn.open) return true;
+      if (!connecting) connect();
+      await new Promise(r => setTimeout(r, 400));
+    }
+    return !!(conn && conn.open);
+  }
   async function sendRaw(payload){
-    if (!conn || !conn.open) { connect(); return { ok: false, reason: 'sem conexão com o computador' }; }
+    if (!conn || !conn.open) {
+      if (!(await waitConn(25000))) return { ok: false, naoEnviado: true, reason: 'sem conexão com o computador' };
+    }
     const id = uid();
     const p = waitAck(id, 45000);
     conn.send(Object.assign({ type: 'scan', id, token }, payload));
@@ -401,6 +413,7 @@ else {
       if (!it) break;
       it.st = 'sending'; save(); renderList();
       const a = await sendRaw({ text: it.code, code: it.code, name: it.name, qty: it.total });
+      if (a.naoEnviado) { it.st = 'fila'; save(); setStatus('⏳ Sem conexão com o computador — vou mandar sozinho assim que reconectar.', 'err'); break; }
       if (a.ok) { it.st = 'ok'; it.msg = a.msg || 'lançado'; }
       else { it.st = 'err'; it.msg = a.reason || 'erro'; paused = true; beep(300, 300); setStatus('⚠️ Parei em ' + (it.name || it.code) + '. Toque em "🔄 Apagar e tentar de novo", ou no ✕ do item para tirar ele e seguir.', 'err'); }
       save(); renderAll();
@@ -513,7 +526,7 @@ else {
     $('rx-ok').hidden = true; $('rx-list').innerHTML = '';
     try {
       rxSt('⏳ Preparando a leitura…');
-      if (!rxTab) { const a = await sendRaw({ action: 'tabela' }); if (a && a.ok && a.data) rxTab = a.data; }
+      const tabP = rxTab ? null : sendRaw({ action: 'tabela' });   // pede a tabela sem travar a leitura
       const img = await new Promise((ok, err) => { const i = new Image(); i.onload = () => ok(i); i.onerror = err; i.src = URL.createObjectURL(f); });
       const sc = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
       const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * sc); c.height = Math.round(img.naturalHeight * sc);
@@ -524,6 +537,7 @@ else {
       rxSt('⏳ Lendo a receita…');
       await prepararLeitor();
       const { data } = await rxWorker.recognize(c);
+      if (tabP) { rxSt('⏳ Buscando a tabela no computador…'); const a = await tabP; if (a && a.ok && a.data) rxTab = a.data; }
       const res = ReceitaCore.analisar(data.text, LISTA, rxTab || { apres: {}, marcas: [] });
       rxRows = [];
       for (const r of res) { if (!r.itens.length) rxRows.push({ r, code: '', qtd: 0 }); else r.itens.forEach(i => rxRows.push({ r, code: i.code, qtd: i.qtd })); }
